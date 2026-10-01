@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+.env
+*.egg-info/
+dist/
+build/
+
+# Node / React
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Database
+*.db
+*.sqlite
+
+# Project Specific
+chroma_db_storage/
+uploads/
+create_db.py
