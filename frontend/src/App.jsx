@@ -14,11 +14,19 @@ function App() {
   const [feedback, setFeedback] = useState(null)
   const [isEvaluating, setIsEvaluating] = useState(false)
   
-  // New state for Resume Upload
   const [resumeStatus, setResumeStatus] = useState('')
   const [isUploading, setIsUploading] = useState(false)
 
   const MAX_QUESTIONS = 5;
+
+  // --- NEW: Function to reset the chat ---
+  const resetInterview = () => {
+    setChatHistory([{ role: 'ai', text: 'Hello! I am your AI Technical Interviewer. What role are you interviewing for today?' }])
+    setUserInput('')
+    setFeedback(null)
+    setShowDashboard(false)
+    setResumeStatus('')
+  }
 
   const handleResumeUpload = async (e) => {
     const file = e.target.files[0]
@@ -108,13 +116,12 @@ function App() {
       <h1 style={{ textAlign: 'center', color: '#2E5C8A' }}>Multi-Agent Interview System</h1>
       
       <div style={{ textAlign: 'center', marginBottom: '20px' }}>
-        <button onClick={() => { setShowDashboard(false); setFeedback(null); }} style={{ padding: '10px 20px', marginRight: '10px', backgroundColor: !showDashboard ? '#2E5C8A' : '#ccc', color: !showDashboard ? 'white' : 'black', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>Live Interview</button>
+        <button onClick={resetInterview} style={{ padding: '10px 20px', marginRight: '10px', backgroundColor: '#2E5C8A', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>🔄 New Interview</button>
         <button onClick={fetchSavedInterviews} style={{ padding: '10px 20px', backgroundColor: showDashboard ? '#2E5C8A' : '#ccc', color: showDashboard ? 'white' : 'black', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>View Saved Interviews</button>
       </div>
 
       {!showDashboard ? (
         <div>
-          {/* Resume Upload Section */}
           <div style={{ textAlign: 'center', marginBottom: '20px', padding: '15px', backgroundColor: '#f0f8ff', borderRadius: '10px', border: '1px dashed #2E5C8A' }}>
             <h3 style={{ margin: '0 0 10px 0', color: '#2E5C8A' }}>Step 1: Upload Your Resume (PDF)</h3>
             <input type="file" accept=".pdf" onChange={handleResumeUpload} disabled={isUploading} style={{ padding: '5px' }} />

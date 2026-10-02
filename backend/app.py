@@ -6,7 +6,7 @@ from config import Config
 from models import db, User, InterviewSession, Question, Response, Feedback
 from agents.interviewer import get_interviewer_response
 from agents.evaluator import evaluate_interview
-from utils.resume_parser import process_resume
+from utils.resume_parser import process_resume, get_resume_context
 
 # Initialize the Flask app
 app = Flask(__name__)
@@ -53,7 +53,7 @@ def upload_resume():
         
         return jsonify({"status": "success", "message": result, "filename": filename})
 
-# --- AI Interview Route ---
+# --- AI Interview Route (Day 5: RAG Enabled) ---
 @app.route('/api/interview', methods=['POST'])
 def interview_chat():
     data = request.get_json()
@@ -74,7 +74,11 @@ def interview_chat():
     db.session.add(new_session)
     db.session.commit() 
 
-    ai_response = get_interviewer_response(user_message, job_role, chat_history)
+    # Fetch resume context from ChromaDB
+    resume_context = get_resume_context()
+    
+    # Pass the context to the AI Interviewer
+    ai_response = get_interviewer_response(user_message, job_role, chat_history, resume_context)
 
     new_question = Question(session_id=new_session.session_id, question_text=ai_response, category='Technical', difficulty='Medium')
     db.session.add(new_question)

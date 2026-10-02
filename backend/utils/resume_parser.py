@@ -2,49 +2,46 @@ import os
 import chromadb
 from pypdf import PdfReader
 
-# Initialize ChromaDB client (saves data to a local folder)
+# Initialize ChromaDB client
 client = chromadb.PersistentClient(path="./chroma_db_storage")
 collection = client.get_or_create_collection(name="candidate_resumes")
 
 def process_resume(file_path):
-    """
-    Reads a PDF, extracts text, chunks it, and stores it in ChromaDB.
-    """
+    """Reads a PDF, extracts text, chunks it, and stores it in ChromaDB."""
     try:
-        # 1. Extract text from PDF
         reader = PdfReader(file_path)
         full_text = ""
         for page in reader.pages:
             full_text += page.extract_text() + "\n"
 
-        # 2. Simple chunking (split by double newlines/paragraphs)
         chunks = full_text.split('\n\n')
-        # Filter out tiny chunks (noise)
         chunks = [c.strip() for c in chunks if len(c.strip()) > 50]
 
         if not chunks:
             return "Error: Could not extract meaningful text from PDF."
 
-        # 3. Store in ChromaDB
-        # Generate unique IDs for each chunk
         ids = [f"chunk_{i}_{os.path.basename(file_path)}" for i in range(len(chunks))]
 
-        collection.add(
-            documents=chunks,
-            ids=ids
-        )
-        
+        collection.add(documents=chunks, ids=ids)
         return f"✅ Successfully processed resume! Stored {len(chunks)} text chunks in ChromaDB."
-
     except Exception as e:
         return f" Error processing resume: {str(e)}"
 
-def query_resume(query_text, n_results=3):
+def get_resume_context():
     """
-    Searches ChromaDB for the most relevant chunks based on a query.
+    Retrieves the most relevant resume chunks to give the AI context.
     """
-    results = collection.query(
-        query_texts=[query_text],
-        n_results=n_results
-    )
-    return results['documents'][0] if results['documents'] else []
+    try:
+        # Query for broad terms to get a good summary of the resume
+        results = collection.query(
+            query_texts=["skills experience projects technologies education"],
+            n_results=3 # Get top 3 most relevant chunks
+        )
+        
+        if results and results['documents'] and results['documents'][0]:
+            # Join the chunks into a single string
+            return "\n\n".join(results['documents'][0])
+        return ""
+    except Exception as e:
+        print(f"ChromaDB Query Error: {e}")
+        return ""
