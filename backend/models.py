@@ -3,53 +3,54 @@ from datetime import datetime
 
 db = SQLAlchemy()
 
-# Table 1: Users
 class User(db.Model):
     __tablename__ = 'users'
     user_id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
-    email = db.Column(db.String(100), unique=True, nullable=False)
-    password_hash = db.Column(db.String(255), nullable=False)
-    role = db.Column(db.String(20), default='candidate')
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password_hash = db.Column(db.String(200), nullable=False)
+    role = db.Column(db.String(20), default='candidate') # 'candidate' or 'admin'
 
-# Table 2: Interview Sessions
 class InterviewSession(db.Model):
     __tablename__ = 'interview_sessions'
     session_id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.user_id'), nullable=False)
     job_role = db.Column(db.String(100), nullable=False)
-    experience_level = db.Column(db.String(50))
-    status = db.Column(db.String(20), default='pending')
+    status = db.Column(db.String(20), default='in_progress')
     started_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-# Table 3: Questions
 class Question(db.Model):
     __tablename__ = 'questions'
     question_id = db.Column(db.Integer, primary_key=True)
     session_id = db.Column(db.Integer, db.ForeignKey('interview_sessions.session_id'), nullable=False)
     question_text = db.Column(db.Text, nullable=False)
-    category = db.Column(db.String(50))
-    difficulty = db.Column(db.String(20))
+    category = db.Column(db.String(50), default='Technical')
+    difficulty = db.Column(db.String(20), default='Medium')
+    
+    # --- NEW FIELDS FOR WEEK 5 ---
+    round_type = db.Column(db.String(50), default='Conceptual') # Conceptual, Coding, Behavioral
+    time_limit_seconds = db.Column(db.Integer, default=180) # 3 minutes default
 
-# Table 4: Responses
 class Response(db.Model):
     __tablename__ = 'responses'
     response_id = db.Column(db.Integer, primary_key=True)
     question_id = db.Column(db.Integer, db.ForeignKey('questions.question_id'), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('users.user_id'), nullable=False)
     answer_text = db.Column(db.Text, nullable=False)
-    submitted_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # --- NEW FIELDS FOR WEEK 5 ---
+    time_taken_seconds = db.Column(db.Integer, default=0)
+    code_snippet = db.Column(db.Text, nullable=True) # For coding rounds
+    code_output = db.Column(db.Text, nullable=True) # Output from Piston API
+    test_cases_passed = db.Column(db.Integer, default=0)
 
-# Table 5: Feedback
 class Feedback(db.Model):
     __tablename__ = 'feedback'
     feedback_id = db.Column(db.Integer, primary_key=True)
     session_id = db.Column(db.Integer, db.ForeignKey('interview_sessions.session_id'), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('users.user_id'), nullable=False)
-    technical_score = db.Column(db.Float)
-    behavioral_score = db.Column(db.Float)
+    technical_score = db.Column(db.Integer)
+    behavioral_score = db.Column(db.Integer)
     strengths = db.Column(db.Text)
     weaknesses = db.Column(db.Text)
     career_recommendations = db.Column(db.Text)
-    generated_at = db.Column(db.DateTime, default=datetime.utcnow)
