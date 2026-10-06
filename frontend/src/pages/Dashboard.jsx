@@ -4,15 +4,19 @@ import axios from 'axios'
 function Dashboard() {
   const [savedInterviews, setSavedInterviews] = useState([])
 
+  // --- CORRECTED: Only one definition of this function, sending the JWT token ---
   const fetchSavedInterviews = async () => {
     try {
-      const response = await axios.get('http://127.0.0.1:5000/api/interviews')
+      const token = localStorage.getItem('token')
+      const response = await axios.get('http://127.0.0.1:5000/api/interviews', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
       setSavedInterviews(response.data.data)
     } catch (error) {
       console.error("Failed to fetch interviews:", error)
     }
   }
-
+  
   useEffect(() => {
     fetchSavedInterviews()
   }, [])
