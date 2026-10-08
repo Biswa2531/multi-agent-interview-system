@@ -7,7 +7,6 @@ client = chromadb.PersistentClient(path="./chroma_db_storage")
 collection = client.get_or_create_collection(name="candidate_resumes")
 
 def process_resume(file_path, user_id):
-    """Reads a PDF, extracts text, chunks it, and stores it in ChromaDB tagged with user_id."""
     try:
         reader = PdfReader(file_path)
         full_text = ""
@@ -29,15 +28,12 @@ def process_resume(file_path, user_id):
         return f"❌ Error processing resume: {str(e)}"
 
 def get_resume_context(user_id):
-    """
-    Retrieves the resume chunks ONLY for the specific logged-in user.
-    """
     try:
         # Broader query to ensure we catch the resume text
         results = collection.query(
-            query_texts=["resume"], 
+            query_texts=["skills experience education projects technologies"], 
             where={"user_id": str(user_id)}, 
-            n_results=5 # Grab up to 5 chunks to be safe
+            n_results=3 
         )
         
         if results and results['documents'] and results['documents'][0]:
