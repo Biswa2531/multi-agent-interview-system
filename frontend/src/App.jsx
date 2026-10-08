@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom'
 import Login from './pages/Login'
 import Interview from './pages/Interview'
 import Dashboard from './pages/Dashboard'
+import Feedback from './pages/Feedback'
 
 function App() {
   return (
@@ -18,6 +19,7 @@ function App() {
         <Route path="/" element={<Login />} />
         <Route path="/interview" element={<Interview />} />
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/feedback" element={<Feedback />} />
       </Routes>
     </Router>
   )
