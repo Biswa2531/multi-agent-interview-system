@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import axios from 'axios'
 import { useNavigate } from 'react-router-dom'
+import toast from 'react-hot-toast' // Import toast
 
 function Interview() {
   const navigate = useNavigate()
   const [userInput, setUserInput] = useState('')
-  const [codeInput, setCodeInput] = useState('') // New state for code
+  const [codeInput, setCodeInput] = useState('')
   const [chatHistory, setChatHistory] = useState([
     { role: 'ai', text: 'Hello! I am your AI Technical Interviewer. We will have 3 rounds: Technical, Coding, and Behavioral. Let\'s start Round 1! What role are you interviewing for today?' }
   ])
@@ -25,7 +26,10 @@ function Interview() {
 
   useEffect(() => {
     const token = localStorage.getItem('token')
-    if (!token) { alert('Please login first!'); navigate('/') }
+    if (!token) { 
+      toast.error('Please login first!') // Replaced alert with toast
+      navigate('/') 
+    }
   }, [navigate])
 
   useEffect(() => {
@@ -62,8 +66,12 @@ function Interview() {
     try {
       const response = await axios.post('http://127.0.0.1:5000/api/clear-resume', {}, { headers: { 'Authorization': `Bearer ${token}` } })
       setResumeStatus(response.data.message)
+      toast.success(response.data.message) // Added toast
       document.querySelector('input[type="file"]').value = ""
-    } catch (error) { setResumeStatus('❌ Error clearing resume.') }
+    } catch (error) { 
+      setResumeStatus('❌ Error clearing resume.') 
+      toast.error('Error clearing resume.') // Added toast
+    }
   }
 
   const handleResumeUpload = async (e) => {
@@ -75,11 +83,13 @@ function Interview() {
     try {
       const response = await axios.post('http://127.0.0.1:5000/api/upload-resume', formData, { headers: { 'Content-Type': 'multipart/form-data', 'Authorization': `Bearer ${token}` } })
       setResumeStatus(response.data.message)
-    } catch (error) { setResumeStatus(' Error uploading resume.') }
-    finally { setIsUploading(false) }
+      toast.success(response.data.message) // Added toast
+    } catch (error) { 
+      setResumeStatus('❌ Error uploading resume.') 
+      toast.error('Error uploading resume.') // Added toast
+    } finally { setIsUploading(false) }
   }
 
-  // Handles normal chat messages (Rounds 1 & 3)
   const sendMessage = async () => {
     if (!userInput.trim()) return
     if (!isTimerActive) setIsTimerActive(true)
@@ -92,11 +102,12 @@ function Interview() {
         { headers: { 'Authorization': `Bearer ${token}` } })
       setChatHistory([...newHistory, { role: 'ai', text: response.data.response }])
       if (response.data.is_complete) setTimeout(() => endInterviewAndGetFeedback(), 1000)
-    } catch (error) { setChatHistory([...newHistory, { role: 'ai', text: 'Error connecting to AI.' }]) }
-    finally { setIsLoading(false) }
+    } catch (error) { 
+      setChatHistory([...newHistory, { role: 'ai', text: 'Error connecting to AI.' }]) 
+      toast.error('Error connecting to AI.') // Added toast
+    } finally { setIsLoading(false) }
   }
 
-  // Handles Code Submissions (Round 2)
   const submitCode = async () => {
     if (!codeInput.trim()) return
     if (!isTimerActive) setIsTimerActive(true)
@@ -110,8 +121,10 @@ function Interview() {
         { headers: { 'Authorization': `Bearer ${token}` } })
       setChatHistory([...newHistory, { role: 'ai', text: response.data.response }])
       if (response.data.is_complete) setTimeout(() => endInterviewAndGetFeedback(), 1000)
-    } catch (error) { setChatHistory([...newHistory, { role: 'ai', text: 'Error connecting to AI.' }]) }
-    finally { setIsLoading(false) }
+    } catch (error) { 
+      setChatHistory([...newHistory, { role: 'ai', text: 'Error connecting to AI.' }]) 
+      toast.error('Error connecting to AI.') // Added toast
+    } finally { setIsLoading(false) }
   }
 
   const endInterviewAndGetFeedback = async () => {
@@ -119,12 +132,14 @@ function Interview() {
     try {
       const sessionsRes = await axios.get('http://127.0.0.1:5000/api/interviews')
       const latestSession = sessionsRes.data.data[0]
-      if (!latestSession) { alert("No interview data found!"); return; }
+      if (!latestSession) { toast.error("No interview data found!"); return; } // Replaced alert
       const evalRes = await axios.post(`http://127.0.0.1:5000/api/evaluate/${latestSession.session_id}`)
       localStorage.setItem('latestFeedback', JSON.stringify(evalRes.data.feedback))
+      toast.success("Interview evaluated successfully!") // Added toast
       navigate('/feedback', { state: { feedback: evalRes.data.feedback } })
-    } catch (error) { alert("Failed to generate feedback.") }
-    finally { setIsEvaluating(false) }
+    } catch (error) { 
+      toast.error("Failed to generate feedback.") // Replaced alert
+    } finally { setIsEvaluating(false) }
   }
 
   return (
@@ -135,9 +150,8 @@ function Interview() {
         <h3 style={{ margin: '0 0 10px 0', color: '#2E5C8A' }}>Step 1: Manage Your Resume</h3>
         <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
           <input type="file" accept=".pdf" onChange={handleResumeUpload} disabled={isUploading} style={{ padding: '5px' }} />
-          <button onClick={handleClearResume} style={{ padding: '8px 15px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>️ Clear Resume</button>
+          <button onClick={handleClearResume} style={{ padding: '8px 15px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>🗑️ Clear Resume</button>
         </div>
-        {resumeStatus && <p style={{ marginTop: '10px', fontWeight: 'bold', color: isUploading ? 'gray' : (resumeStatus.includes('Error') ? 'red' : 'green') }}>{resumeStatus}</p>}
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', padding: '15px', backgroundColor: '#2E5C8A', color: 'white', borderRadius: '10px' }}>
@@ -158,19 +172,14 @@ function Interview() {
           </div>
         ))}
         {isLoading && <p style={{ color: 'gray', fontStyle: 'italic' }}>AI is thinking...</p>}
-        {isEvaluating && <p style={{ color: 'green', fontWeight: 'bold', textAlign: 'center', fontSize: '18px' }}> AI is analyzing your answers...</p>}
+        {isEvaluating && <p style={{ color: 'green', fontWeight: 'bold', textAlign: 'center', fontSize: '18px' }}>🤖 AI is analyzing your answers...</p>}
       </div>
 
-      {/* --- CONDITIONAL INPUT AREA --- */}
       {currentRound === 2 ? (
-        // CODE EDITOR FOR ROUND 2
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           <textarea 
-            value={codeInput} 
-            onChange={(e) => setCodeInput(e.target.value)} 
-            placeholder="Write your code here..." 
-            style={{ width: '100%', height: '150px', padding: '10px', borderRadius: '5px', border: '1px solid #ccc', fontSize: '14px', fontFamily: 'monospace', backgroundColor: '#1e1e1e', color: '#d4d4d4' }} 
-            disabled={isLoading || isEvaluating} 
+            value={codeInput} onChange={(e) => setCodeInput(e.target.value)} placeholder="Write your code here..." 
+            style={{ width: '100%', height: '150px', padding: '10px', borderRadius: '5px', border: '1px solid #ccc', fontSize: '14px', fontFamily: 'monospace', backgroundColor: '#1e1e1e', color: '#d4d4d4' }} disabled={isLoading || isEvaluating} 
           />
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
             <button onClick={submitCode} disabled={isLoading || isEvaluating} style={{ padding: '10px 20px', backgroundColor: '#2E5C8A', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontSize: '16px' }}>Submit Code</button>
@@ -178,14 +187,11 @@ function Interview() {
           </div>
         </div>
       ) : (
-        // NORMAL CHAT FOR ROUNDS 1 & 3
         <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
           <input 
             type="text" value={userInput} onChange={(e) => setUserInput(e.target.value)} 
-            onKeyPress={(e) => e.key === 'Enter' && sendMessage()} 
-            placeholder="Type your answer..." 
-            style={{ flex: 1, padding: '10px', borderRadius: '5px', border: '1px solid #ccc', fontSize: '16px' }} 
-            disabled={isLoading || isEvaluating} 
+            onKeyPress={(e) => e.key === 'Enter' && sendMessage()} placeholder="Type your answer..." 
+            style={{ flex: 1, padding: '10px', borderRadius: '5px', border: '1px solid #ccc', fontSize: '16px' }} disabled={isLoading || isEvaluating} 
           />
           <button onClick={sendMessage} disabled={isLoading || isEvaluating} style={{ padding: '10px 20px', backgroundColor: '#2E5C8A', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontSize: '16px' }}>Send</button>
           <button onClick={endInterviewAndGetFeedback} disabled={isEvaluating} style={{ padding: '10px 20px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontSize: '16px' }}>{isEvaluating ? 'Evaluating...' : 'End Interview'}</button>

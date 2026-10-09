@@ -1,9 +1,6 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
-
-// Import the new Navbar component
+import { Toaster } from 'react-hot-toast' // Import Toaster
 import Navbar from './components/Navbar'
-
-// Import all your page components
 import Login from './pages/Login'
 import Signup from './pages/Signup'
 import Dashboard from './pages/Dashboard'
@@ -13,18 +10,29 @@ import Feedback from './pages/Feedback'
 function App() {
   return (
     <Router>
-      {/* Main wrapper with a clean, professional light background */}
-      <div style={{ 
-        minHeight: '100vh', 
-        backgroundColor: '#f4f6f8', 
-        display: 'flex', 
-        flexDirection: 'column' 
-      }}>
-        
-        {/* The Navbar will show on EVERY page automatically */}
+      {/* This makes the beautiful pop-up notifications appear on every page */}
+      <Toaster 
+        position="top-center" 
+        reverseOrder={false}
+        toastOptions={{
+          duration: 4000,
+          style: {
+            background: '#363636',
+            color: '#fff',
+            borderRadius: '10px',
+            padding: '16px',
+          },
+          success: {
+            iconTheme: { primary: '#28a745', secondary: '#fff' },
+          },
+          error: {
+            iconTheme: { primary: '#dc3545', secondary: '#fff' },
+          },
+        }}
+      />
+
+      <div style={{ minHeight: '100vh', backgroundColor: '#f4f6f8', display: 'flex', flexDirection: 'column' }}>
         <Navbar />
-        
-        {/* Main content area that changes based on the route */}
         <main style={{ flex: 1, padding: '20px' }}>
           <Routes>
             <Route path="/" element={<Login />} />
@@ -34,19 +42,9 @@ function App() {
             <Route path="/feedback" element={<Feedback />} />
           </Routes>
         </main>
-
-        {/* Optional: Simple Footer */}
-        <footer style={{ 
-          textAlign: 'center', 
-          padding: '20px', 
-          color: '#666', 
-          fontSize: '14px',
-          borderTop: '1px solid #e0e0e0',
-          backgroundColor: '#ffffff'
-        }}>
-          © 2026 Multi-Agent AI Interview System. All rights reserved.
+        <footer style={{ textAlign: 'center', padding: '20px', color: '#666', fontSize: '14px', borderTop: '1px solid #e0e0e0', backgroundColor: '#ffffff' }}>
+          © 2024 Multi-Agent AI Interview System. All rights reserved.
         </footer>
-
       </div>
     </Router>
   )
