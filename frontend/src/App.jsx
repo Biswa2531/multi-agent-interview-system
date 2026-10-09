@@ -1,26 +1,53 @@
-import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom'
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
+
+// Import the new Navbar component
+import Navbar from './components/Navbar'
+
+// Import all your page components
 import Login from './pages/Login'
-import Interview from './pages/Interview'
+import Signup from './pages/Signup'
 import Dashboard from './pages/Dashboard'
+import Interview from './pages/Interview'
 import Feedback from './pages/Feedback'
 
 function App() {
   return (
     <Router>
-      {/* Navigation Bar */}
-      <nav style={{ backgroundColor: '#2E5C8A', padding: '15px', display: 'flex', justifyContent: 'center', gap: '20px', marginBottom: '20px' }}>
-        <Link to="/" style={{ color: 'white', textDecoration: 'none', fontWeight: 'bold', fontSize: '18px' }}>🏠 Home / Login</Link>
-        <Link to="/interview" style={{ color: 'white', textDecoration: 'none', fontWeight: 'bold', fontSize: '18px' }}>️ Take Interview</Link>
-        <Link to="/dashboard" style={{ color: 'white', textDecoration: 'none', fontWeight: 'bold', fontSize: '18px' }}>📊 Dashboard</Link>
-      </nav>
+      {/* Main wrapper with a clean, professional light background */}
+      <div style={{ 
+        minHeight: '100vh', 
+        backgroundColor: '#f4f6f8', 
+        display: 'flex', 
+        flexDirection: 'column' 
+      }}>
+        
+        {/* The Navbar will show on EVERY page automatically */}
+        <Navbar />
+        
+        {/* Main content area that changes based on the route */}
+        <main style={{ flex: 1, padding: '20px' }}>
+          <Routes>
+            <Route path="/" element={<Login />} />
+            <Route path="/signup" element={<Signup />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/interview" element={<Interview />} />
+            <Route path="/feedback" element={<Feedback />} />
+          </Routes>
+        </main>
 
-      {/* Route Definitions */}
-      <Routes>
-        <Route path="/" element={<Login />} />
-        <Route path="/interview" element={<Interview />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/feedback" element={<Feedback />} />
-      </Routes>
+        {/* Optional: Simple Footer */}
+        <footer style={{ 
+          textAlign: 'center', 
+          padding: '20px', 
+          color: '#666', 
+          fontSize: '14px',
+          borderTop: '1px solid #e0e0e0',
+          backgroundColor: '#ffffff'
+        }}>
+          © 2026 Multi-Agent AI Interview System. All rights reserved.
+        </footer>
+
+      </div>
     </Router>
   )
 }
