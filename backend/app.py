@@ -24,6 +24,9 @@ app.config['MAIL_USE_TLS'] = os.getenv('MAIL_USE_TLS') == 'True'
 app.config['MAIL_USERNAME'] = os.getenv('MAIL_USERNAME')
 app.config['MAIL_PASSWORD'] = os.getenv('MAIL_PASSWORD')
 
+# --- IST TIMEZONE DEFINITION ---
+IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+
 mail = Mail(app)
 CORS(app)
 db.init_app(app)
@@ -36,7 +39,6 @@ UPLOAD_FOLDER = 'uploads'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
-# Temporary storage for OTPs (In production, use Redis or a DB table)
 otp_store = {} 
 
 def token_required(f):
@@ -53,7 +55,6 @@ def token_required(f):
         return f(current_user, *args, **kwargs)
     return decorated
 
-# --- HELPER: Send Email ---
 def send_email(subject, recipient, body):
     try:
         msg = Message(subject, sender=app.config['MAIL_USERNAME'], recipients=[recipient])
@@ -64,17 +65,14 @@ def send_email(subject, recipient, body):
         print(f"Email Error: {e}")
         return False
 
-# --- AUTH ROUTES WITH OTP ---
 @app.route('/api/signup', methods=['POST'])
 def signup():
     data = request.get_json()
     email = data.get('email', '')
     if User.query.filter_by(email=email).first():
         return jsonify({"error": "Email already registered"}), 400
-    
     otp = str(random.randint(100000, 999999))
     otp_store[email] = {'otp': otp, 'data': data}
-    
     send_email("Your Interview App OTP", email, f"Your OTP for signup is: {otp}. It expires in 5 minutes.")
     return jsonify({"status": "success", "message": "OTP sent to email!"})
 
@@ -82,7 +80,6 @@ def signup():
 def verify_signup_otp():
     data = request.get_json()
     email, otp = data.get('email', ''), data.get('otp', '')
-    
     if email in otp_store and otp_store[email]['otp'] == otp:
         user_data = otp_store[email]['data']
         new_user = User(name=user_data['name'], email=email, password_hash=generate_password_hash(user_data['password'], method='pbkdf2:sha256'), role='candidate')
@@ -97,7 +94,6 @@ def login():
     email = data.get('email', '')
     user = User.query.filter_by(email=email).first()
     if not user: return jsonify({"error": "User not found"}), 404
-    
     otp = str(random.randint(100000, 999999))
     otp_store[email] = {'otp': otp, 'password': data.get('password', '')}
     send_email("Your Login OTP", email, f"Your OTP for login is: {otp}.")
@@ -107,16 +103,19 @@ def login():
 def verify_login_otp():
     data = request.get_json()
     email, otp = data.get('email', ''), data.get('otp', '')
-    
     if email in otp_store and otp_store[email]['otp'] == otp:
         user = User.query.filter_by(email=email).first()
         if check_password_hash(user.password_hash, otp_store[email]['password']):
-            token = jwt.encode({'user_id': user.user_id, 'email': user.email, 'role': user.role, 'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)}, app.config['SECRET_KEY'], algorithm='HS256')
+            token = jwt.encode({
+                'user_id': user.user_id, 
+                'email': user.email, 
+                'role': user.role, 
+                'exp': datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=24)
+            }, app.config['SECRET_KEY'], algorithm='HS256')
             del otp_store[email]
             return jsonify({"status": "success", "token": token, "user": {"user_id": user.user_id, "name": user.name, "email": user.email}})
     return jsonify({"error": "Invalid OTP or Password"}), 401
 
-# --- INTERVIEW ROUTES ---
 @app.route('/api/upload-resume', methods=['POST'])
 @token_required
 def upload_resume(current_user):
@@ -136,6 +135,80 @@ def clear_resume(current_user):
         return jsonify({"status": "success", "message": "Resume cleared!"})
     except Exception as e: return jsonify({"error": str(e)}), 500
 
+@app.route('/api/interview/active', methods=['GET'])
+@token_required
+def get_active_interview(current_user):
+    active_session = InterviewSession.query.filter_by(user_id=current_user.user_id, status='in_progress').order_by(InterviewSession.started_at.desc()).first()
+    if not active_session:
+        return jsonify({"status": "success", "active": False})
+    
+    questions = Question.query.filter_by(session_id=active_session.session_id).order_by(Question.question_id).all()
+    qa_pairs = []
+    for q in questions:
+        response = Response.query.filter_by(question_id=q.question_id).first()
+        qa_pairs.append({
+            "question": q.question_text,
+            "answer": response.answer_text if response else ""
+        })
+    
+    q_count = len(questions)
+    current_round = 1
+    if q_count >= 5: current_round = 2
+    if q_count >= 10: current_round = 3
+    
+    return jsonify({
+        "status": "success",
+        "active": True,
+        "session_id": active_session.session_id,
+        "job_role": active_session.job_role,
+        "current_round": current_round,
+        "qa_pairs": qa_pairs
+    })
+
+@app.route('/api/interview/session/<int:session_id>', methods=['GET'])
+@token_required
+def get_specific_session(current_user, session_id):
+    session = InterviewSession.query.filter_by(session_id=session_id, user_id=current_user.user_id).first()
+    if not session:
+        return jsonify({"error": "Session not found"}), 404
+        
+    questions = Question.query.filter_by(session_id=session_id).order_by(Question.question_id).all()
+    qa_pairs = []
+    for q in questions:
+        response = Response.query.filter_by(question_id=q.question_id).first()
+        qa_pairs.append({
+            "question": q.question_text,
+            "answer": response.answer_text if response else ""
+        })
+    
+    q_count = len(questions)
+    current_round = 1
+    if q_count >= 5: current_round = 2
+    if q_count >= 10: current_round = 3
+    
+    return jsonify({
+        "status": "success",
+        "session_id": session.session_id,
+        "job_role": session.job_role,
+        "current_round": current_round,
+        "qa_pairs": qa_pairs
+    })
+
+@app.route('/api/interview/<int:session_id>', methods=['DELETE'])
+@token_required
+def delete_interview(current_user, session_id):
+    session = InterviewSession.query.filter_by(session_id=session_id, user_id=current_user.user_id).first()
+    if not session:
+        return jsonify({"error": "Session not found"}), 404
+    
+    Response.query.filter(Response.question_id.in_(db.session.query(Question.question_id).filter_by(session_id=session_id))).delete(synchronize_session='fetch')
+    Question.query.filter_by(session_id=session_id).delete()
+    Feedback.query.filter_by(session_id=session_id).delete()
+    
+    db.session.delete(session)
+    db.session.commit()
+    return jsonify({"status": "success", "message": "Interview deleted successfully!"})
+
 @app.route('/api/interview', methods=['POST'])
 @token_required
 def interview_chat(current_user):
@@ -147,7 +220,12 @@ def interview_chat(current_user):
     if active_session and Question.query.filter_by(session_id=active_session.session_id).count() >= 15:
         active_session.status = 'completed'; db.session.commit(); active_session = None
     if not active_session:
-        active_session = InterviewSession(user_id=current_user.user_id, job_role=job_role, status='in_progress')
+        active_session = InterviewSession(
+            user_id=current_user.user_id, 
+            job_role=job_role, 
+            status='in_progress',
+            started_at=datetime.datetime.now(datetime.timezone.utc)
+        )
         db.session.add(active_session); db.session.commit()
 
     if Question.query.filter_by(session_id=active_session.session_id).count() >= 15:
@@ -168,9 +246,23 @@ def get_interviews():
     result = []
     for session in sessions:
         feedback = Feedback.query.filter_by(session_id=session.session_id).first()
+        
+        # --- FIX: Format Date to IST directly in Python ---
+        raw_time = session.started_at
+        if raw_time:
+            if raw_time.tzinfo is None:
+                raw_time = raw_time.replace(tzinfo=datetime.timezone.utc)
+            ist_time = raw_time.astimezone(IST)
+            # Format: "10 Oct 2026, 02:33 PM"
+            date_str = ist_time.strftime("%d %b %Y, %I:%M %p") 
+        else:
+            date_str = "Unknown Date"
+            
         result.append({
-            "session_id": session.session_id, "job_role": session.job_role, "status": session.status,
-            "started_at": session.started_at.strftime("%Y-%m-%d %H:%M:%S"),
+            "session_id": session.session_id, 
+            "job_role": session.job_role, 
+            "status": session.status,
+            "started_at": date_str, # Sending pre-formatted IST string
             "technical_score": feedback.technical_score if feedback else None,
             "behavioral_score": feedback.behavioral_score if feedback else None
         })
@@ -197,7 +289,6 @@ def evaluate_session(session_id):
         ))
         session.status = 'completed'; db.session.commit()
 
-        # --- SEND FEEDBACK EMAIL ---
         user = db.session.get(User, session.user_id)
         if user:
             email_body = f"Hi {user.name},\n\nYour interview for {session.job_role} is complete!\n\nTechnical Score: {feedback_data.get('technical_score')}/10\nBehavioral Score: {feedback_data.get('behavioral_score')}/10\n\nStrengths: {feedback_data.get('strengths')}\n\nPlease log in to your dashboard to view the full report."
