@@ -43,7 +43,7 @@ function App() {
           </Routes>
         </main>
         <footer style={{ textAlign: 'center', padding: '20px', color: '#666', fontSize: '14px', borderTop: '1px solid #e0e0e0', backgroundColor: '#ffffff' }}>
-          © 2024 Multi-Agent AI Interview System. All rights reserved.
+          © 2026 Multi-Agent AI Interview System. All rights reserved.
         </footer>
       </div>
     </Router>
