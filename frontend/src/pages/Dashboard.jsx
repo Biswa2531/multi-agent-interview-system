@@ -89,7 +89,7 @@ function Dashboard() {
               <div>
                 <h3 style={{ margin: '0 0 10px 0', color: '#2E5C8A', paddingRight: '20px' }}>{interview.job_role}</h3>
                 {/* Directly displaying the IST string sent by Python */}
-                <p style={{ margin: '5px 0', color: '#666', fontSize: '14px' }}> {interview.started_at}</p>
+                <p style={{ margin: '5px 0', color: '#666', fontSize: '14px' }}>📅 {interview.started_at}</p>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '15px', paddingTop: '15px', borderTop: '1px solid #eee' }}>
                   <div style={{ textAlign: 'center' }}>
                     <p style={{ margin: 0, fontSize: '12px', color: '#888' }}>Technical</p>

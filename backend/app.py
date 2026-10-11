@@ -247,14 +247,18 @@ def get_interviews():
     for session in sessions:
         feedback = Feedback.query.filter_by(session_id=session.session_id).first()
         
-        # --- FIX: Format Date to IST directly in Python ---
+        # --- FOOLPROOF IST CONVERSION ---
         raw_time = session.started_at
         if raw_time:
+            # 1. If the database stored a "naive" time (no timezone), assume it's UTC
             if raw_time.tzinfo is None:
                 raw_time = raw_time.replace(tzinfo=datetime.timezone.utc)
+            
+            # 2. Convert UTC to IST
             ist_time = raw_time.astimezone(IST)
-            # Format: "10 Oct 2026, 02:33 PM"
-            date_str = ist_time.strftime("%d %b %Y, %I:%M %p") 
+            
+            # 3. Format it into a clean string: "11 Oct 2026, 02:30 PM"
+            date_str = ist_time.strftime("%d %b %Y, %I:%M %p")
         else:
             date_str = "Unknown Date"
             
@@ -262,7 +266,7 @@ def get_interviews():
             "session_id": session.session_id, 
             "job_role": session.job_role, 
             "status": session.status,
-            "started_at": date_str, # Sending pre-formatted IST string
+            "started_at": date_str, # Sending the clean, pre-formatted IST string
             "technical_score": feedback.technical_score if feedback else None,
             "behavioral_score": feedback.behavioral_score if feedback else None
         })
