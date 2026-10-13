@@ -1,145 +1,169 @@
-import { useEffect, useState, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from 'recharts'
-import jsPDF from 'jspdf'
-import html2canvas from 'html2canvas'
+import axios from 'axios'
+import toast from 'react-hot-toast'
+import StarryBackground from '../components/StarryBackground'
 
 function Feedback() {
   const navigate = useNavigate()
   const location = useLocation()
-  const [feedbackData, setFeedbackData] = useState(null)
-  const reportRef = useRef(null) // Reference for PDF capture
+  const [interviews, setInterviews] = useState([])
+  const [selectedInterview, setSelectedInterview] = useState(null)
 
   useEffect(() => {
-    if (location.state?.feedback) {
-      setFeedbackData(location.state.feedback)
-    } else {
-      const stored = localStorage.getItem('latestFeedback')
-      if (stored) {
-        try { setFeedbackData(JSON.parse(stored)) } catch (e) { console.error(e) }
-      }
-    }
     const token = localStorage.getItem('token')
-    if (!token) navigate('/')
-  }, [location, navigate])
+    if (!token) { navigate('/') }
+    fetchInterviews(token)
+  }, [navigate])
 
-  // Function to download the report as PDF
-  const downloadPDF = async () => {
-    if (!reportRef.current) return;
-    
-    // Temporarily hide the button during capture
-    const btn = document.getElementById('download-btn');
-    if(btn) btn.style.display = 'none';
-
-    const canvas = await html2canvas(reportRef.current, { scale: 2, backgroundColor: '#ffffff' });
-    const imgData = canvas.toDataURL('image/png');
-    const pdf = new jsPDF('p', 'mm', 'a4');
-    const pdfWidth = pdf.internal.pageSize.getWidth();
-    const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-    
-    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-    pdf.save('AI_Interview_Feedback_Report.pdf');
-
-    // Show button again
-    if(btn) btn.style.display = 'block';
-  };
-
-  if (!feedbackData) {
-    return (
-      <div style={{ maxWidth: '800px', margin: '50px auto', padding: '20px', textAlign: 'center' }}>
-        <h2>Loading feedback...</h2>
-      </div>
-    )
+  const fetchInterviews = async (token) => {
+    try {
+      const response = await axios.get('http://127.0.0.1:5000/api/interviews', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      setInterviews(response.data.data)
+    } catch (error) {
+      console.error("Failed to fetch interviews:", error)
+    }
   }
 
-  // Data for the Radar Chart (Mapping scores to a 0-100 scale)
-  const chartData = [
-    { subject: 'Technical', score: feedbackData.technical_score * 10, fullMark: 100 },
-    { subject: 'Behavioral', score: feedbackData.behavioral_score * 10, fullMark: 100 },
-    { subject: 'Logic', score: 75, fullMark: 100 }, // Simulated for visual balance
-    { subject: 'Communication', score: 80, fullMark: 100 },
-    { subject: 'Problem Solving', score: 70, fullMark: 100 },
-  ];
+  const handleViewDetails = (interview) => {
+    setSelectedInterview(interview)
+  }
+
+  const handleExportPDF = async (sessionId) => {
+    try {
+      const token = localStorage.getItem('token')
+      const response = await axios.get(`http://127.0.0.1:5000/api/interview/${sessionId}/report`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+        responseType: 'blob'
+      })
+      const url = window.URL.createObjectURL(new Blob([response.data]))
+      const link = document.createElement('a')
+      link.href = url
+      link.setAttribute('download', `interview_report_${sessionId}.pdf`)
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      toast.success('PDF report downloaded!')
+    } catch (error) {
+      toast.error('Failed to export PDF')
+    }
+  }
 
   return (
-    <div style={{ maxWidth: '900px', margin: '0 auto', padding: '20px', fontFamily: 'Arial' }}>
-      <h1 style={{ textAlign: 'center', color: '#2E5C8A' }}>Interview Evaluation Report</h1>
-      
-      {/* This div is what gets captured by the PDF generator */}
-      <div ref={reportRef} style={{ backgroundColor: '#ffffff', border: '1px solid #e0e0e0', borderRadius: '15px', padding: '40px', boxShadow: '0 4px 20px rgba(0,0,0,0.05)' }}>
-        
-        {/* Header inside PDF */}
-        <div style={{ textAlign: 'center', borderBottom: '2px solid #2E5C8A', paddingBottom: '20px', marginBottom: '30px' }}>
-          <h2 style={{ color: '#2E5C8A', margin: 0 }}>Multi-Agent AI Interview System</h2>
-          <p style={{ color: '#666', margin: '5px 0 0 0' }}>Comprehensive Candidate Evaluation</p>
-        </div>
-
-        {/* Scores and Chart Section */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px', flexWrap: 'wrap', gap: '20px' }}>
-          
-          {/* Scores */}
-          <div style={{ flex: 1, minWidth: '250px' }}>
-            <div style={{ textAlign: 'center', padding: '20px', backgroundColor: '#f0f8ff', borderRadius: '10px', marginBottom: '15px' }}>
-              <h3 style={{ margin: '0 0 10px 0', color: '#2E5C8A' }}>Technical Score</h3>
-              <p style={{ fontSize: '36px', fontWeight: 'bold', margin: 0, color: '#2E5C8A' }}>{feedbackData.technical_score}/10</p>
-            </div>
-            <div style={{ textAlign: 'center', padding: '20px', backgroundColor: '#f0fff0', borderRadius: '10px' }}>
-              <h3 style={{ margin: '0 0 10px 0', color: '#28a745' }}>Behavioral Score</h3>
-              <p style={{ fontSize: '36px', fontWeight: 'bold', margin: 0, color: '#28a745' }}>{feedbackData.behavioral_score}/10</p>
-            </div>
-          </div>
-
-          {/* Radar Chart */}
-          <div style={{ flex: 1, minWidth: '300px', height: '300px' }}>
-            <h3 style={{ textAlign: 'center', color: '#2E5C8A', marginTop: 0 }}>Skill Distribution</h3>
-            <ResponsiveContainer width="100%" height="100%">
-              <RadarChart cx="50%" cy="50%" outerRadius="80%" data={chartData}>
-                <PolarGrid stroke="#e0e0e0" />
-                <PolarAngleAxis dataKey="subject" tick={{ fill: '#666', fontSize: 12 }} />
-                <PolarRadiusAxis angle={90} domain={[0, 100]} tick={{ fill: '#999', fontSize: 10 }} />
-                <Radar name="Candidate" dataKey="score" stroke="#2E5C8A" fill="#2E5C8A" fillOpacity={0.4} />
-              </RadarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Detailed Feedback Sections */}
-        <div style={{ marginBottom: '25px' }}>
-          <h3 style={{ color: '#28a745', borderBottom: '2px solid #eee', paddingBottom: '10px' }}>✅ Strengths</h3>
-          <p style={{ lineHeight: '1.8', color: '#333', fontSize: '16px' }}>{feedbackData.strengths}</p>
-        </div>
-
-        <div style={{ marginBottom: '25px' }}>
-          <h3 style={{ color: '#dc3545', borderBottom: '2px solid #eee', paddingBottom: '10px' }}>️ Areas for Improvement</h3>
-          <p style={{ lineHeight: '1.8', color: '#333', fontSize: '16px' }}>{feedbackData.weaknesses}</p>
-        </div>
-
-        <div style={{ marginBottom: '10px' }}>
-          <h3 style={{ color: '#2E5C8A', borderBottom: '2px solid #eee', paddingBottom: '10px' }}>🚀 Career Recommendations</h3>
-          <p style={{ lineHeight: '1.8', color: '#333', fontSize: '16px' }}>{feedbackData.career_recommendations}</p>
-        </div>
-
-        {/* Footer inside PDF */}
-        <div style={{ textAlign: 'center', marginTop: '40px', paddingTop: '20px', borderTop: '1px solid #eee', color: '#999', fontSize: '12px' }}>
-          Generated by Multi-Agent AI Interview System • {new Date().toLocaleDateString()}
-        </div>
+    <div className="min-h-screen relative overflow-hidden bg-gray-50 dark:bg-slate-900 transition-colors duration-300">
+      <StarryBackground />
+      <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
+        <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-cyan-500/20 dark:bg-cyan-500/10 rounded-full blur-3xl animate-bg-1"></div>
+        <div className="absolute bottom-[-10%] right-[-10%] w-[600px] h-[600px] bg-blue-500/20 dark:bg-blue-500/10 rounded-full blur-3xl animate-bg-2"></div>
       </div>
 
-      {/* Action Buttons (Outside the PDF capture area) */}
-      <div style={{ textAlign: 'center', marginTop: '30px', display: 'flex', gap: '15px', justifyContent: 'center' }}>
-        <button 
-          id="download-btn"
-          onClick={downloadPDF} 
-          style={{ padding: '12px 30px', backgroundColor: '#2E5C8A', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '16px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '10px' }}
-        >
-          📥 Download PDF Report
-        </button>
-        <button 
-          onClick={() => navigate('/dashboard')} 
-          style={{ padding: '12px 30px', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '16px', fontWeight: 'bold' }}
-        >
-          Go to Dashboard
-        </button>
+      <div className="relative z-10 pt-24 pb-12 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto">
+          
+          {/* Header */}
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold text-slate-900 dark:text-white">
+              Feedback <span className="bg-gradient-to-r from-cyan-600 to-blue-600 dark:from-cyan-400 dark:to-blue-400 bg-clip-text text-transparent">Reports</span>
+            </h1>
+            <p className="text-slate-600 dark:text-slate-400 mt-1">View your interview history and detailed evaluation reports.</p>
+          </div>
+
+          {/* Interview History Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {interviews.map((interview) => (
+              <div key={interview.session_id} className="glass-card rounded-2xl p-6 hover:scale-[1.02] transition-transform duration-300">
+                <div className="mb-4">
+                  <h3 className="text-lg font-bold text-slate-900 dark:text-white">{interview.job_role}</h3>
+                  <p className="text-xs font-mono text-slate-500 dark:text-slate-400 mt-1"> {interview.started_at}</p>
+                </div>
+
+                <div className="flex justify-between items-center mb-4 pt-4 border-t border-slate-200 dark:border-slate-700">
+                  <div className="text-center">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">Technical</p>
+                    <p className={`text-xl font-bold ${interview.technical_score >= 7 ? 'text-emerald-500' : 'text-red-500'}`}>
+                      {interview.technical_score !== null ? `${interview.technical_score}/10` : 'N/A'}
+                    </p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">Behavioral</p>
+                    <p className={`text-xl font-bold ${interview.behavioral_score >= 7 ? 'text-emerald-500' : 'text-red-500'}`}>
+                      {interview.behavioral_score !== null ? `${interview.behavioral_score}/10` : 'N/A'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => handleViewDetails(interview)}
+                    className="flex-1 glass-button-secondary py-2 text-xs font-semibold"
+                  >
+                    View Details
+                  </button>
+                  <button 
+                    onClick={() => handleExportPDF(interview.session_id)}
+                    className="flex-1 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-400 hover:to-green-500 text-white py-2 rounded-lg text-xs font-bold transition-all"
+                  >
+                    Export PDF
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Detailed Report Modal */}
+          {selectedInterview && (
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setSelectedInterview(null)}>
+              <div className="glass-card rounded-2xl p-8 max-w-2xl w-full max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+                <div className="flex justify-between items-start mb-6">
+                  <div>
+                    <h2 className="text-2xl font-bold text-slate-900 dark:text-white">{selectedInterview.job_role}</h2>
+                    <p className="text-sm text-slate-600 dark:text-slate-400">{selectedInterview.started_at}</p>
+                  </div>
+                  <button onClick={() => setSelectedInterview(null)} className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="glass-card rounded-xl p-4">
+                    <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Technical Score</h3>
+                    <p className="text-3xl font-bold text-cyan-600 dark:text-cyan-400">{selectedInterview.technical_score || 'N/A'}/10</p>
+                  </div>
+
+                  <div className="glass-card rounded-xl p-4">
+                    <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Behavioral Score</h3>
+                    <p className="text-3xl font-bold text-purple-600 dark:text-purple-400">{selectedInterview.behavioral_score || 'N/A'}/10</p>
+                  </div>
+
+                  {selectedInterview.feedback && (
+                    <div className="glass-card rounded-xl p-4">
+                      <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">AI Feedback</h3>
+                      <p className="text-sm text-slate-600 dark:text-slate-400 whitespace-pre-line">{selectedInterview.feedback}</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-6 flex gap-3">
+                  <button 
+                    onClick={() => handleExportPDF(selectedInterview.session_id)}
+                    className="flex-1 glass-button py-3"
+                  >
+                    Export Full Report
+                  </button>
+                  <button 
+                    onClick={() => setSelectedInterview(null)}
+                    className="flex-1 glass-button-secondary py-3"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+        </div>
       </div>
     </div>
   )

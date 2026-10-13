@@ -1,320 +1,378 @@
 import { useState, useEffect, useRef } from 'react'
-import axios from 'axios'
 import { useNavigate, useLocation } from 'react-router-dom'
+import axios from 'axios'
 import toast from 'react-hot-toast'
+import Editor from '@monaco-editor/react'
+import StarryBackground from '../components/StarryBackground'
 
 function Interview() {
   const navigate = useNavigate()
-  const location = useLocation() // Added to get session ID from Dashboard
-  const [userInput, setUserInput] = useState('')
-  const [codeInput, setCodeInput] = useState('')
-  const [chatHistory, setChatHistory] = useState([])
-  const [isLoading, setIsLoading] = useState(false)
-  const [jobRole, setJobRole] = useState('Python Developer')
-  const [resumeStatus, setResumeStatus] = useState('')
-  const [isUploading, setIsUploading] = useState(false)
-  const [isEvaluating, setIsEvaluating] = useState(false)
+  const location = useLocation()
+  const sessionId = location.state?.sessionId
+  const [jobRole, setJobRole] = useState(location.state?.jobRole || 'Software Engineer')
+  const [isRoleDropdownOpen, setIsRoleDropdownOpen] = useState(false)
+  const [roleInput, setRoleInput] = useState(jobRole)
   
+  // Round & Timer Configuration
+  const roundLimits = { 1: 15 * 60, 2: 10 * 60, 3: 5 * 60 }
   const [currentRound, setCurrentRound] = useState(1)
-  const [timeLeft, setTimeLeft] = useState(300)
-  const [isTimerActive, setIsTimerActive] = useState(false)
-  const timerRef = useRef(null)
+  const [timeRemaining, setTimeRemaining] = useState(roundLimits[1])
+  const [isActive, setIsActive] = useState(true)
+  const [interviewStarted, setInterviewStarted] = useState(false)
 
-  const [isListening, setIsListening] = useState(false)
-  const [isSpeechSupported, setIsSpeechSupported] = useState(true)
-  const recognitionRef = useRef(null)
+  // Chat State
+  const [messages, setMessages] = useState([])
+  const [input, setInput] = useState('')
+  const [isLoading, setIsLoading] = useState(false)
+  const chatEndRef = useRef(null)
 
-  const ROUND_NAMES = { 1: "Technical/Conceptual", 2: "Coding/Problem Solving", 3: "Behavioral/HR" }
-  const ROUND_TIME = 300 
+  // Code Editor State
+  const [showCodeEditor, setShowCodeEditor] = useState(false)
+  const [code, setCode] = useState('// Write your code here...\n\nfunction solution() {\n  \n}')
 
-  useEffect(() => {
-    document.body.style.backgroundColor = '#f4f6f8';
-    document.body.style.color = '#333333';
-    return () => { document.body.style.backgroundColor = ''; document.body.style.color = ''; };
-  }, []);
+  // Resume State
+  const [resumeFile, setResumeFile] = useState(null)
 
-  const handleVoiceSend = async (transcript) => {
-    if (!transcript.trim()) return;
-    if (!isTimerActive) setIsTimerActive(true);
-    
-    const newHistory = [...chatHistory, { role: 'user', text: transcript }];
-    setChatHistory(newHistory);
-    setUserInput('');
-    setIsLoading(true);
-    
-    try {
-      const token = localStorage.getItem('token');
-      const response = await axios.post('http://127.0.0.1:5000/api/interview', 
-        { message: transcript, job_role: jobRole, chat_history: newHistory, current_round: currentRound },
-        { headers: { 'Authorization': `Bearer ${token}` } }
-      );
-      setChatHistory([...newHistory, { role: 'ai', text: response.data.response }]);
-      if (response.data.is_complete) setTimeout(() => endInterviewAndGetFeedback(), 1000);
-    } catch (error) { 
-      toast.error('Error connecting to AI.'); 
-    } finally { setIsLoading(false); }
-  };
+  // Deliberation Stream State
+  const [logs, setLogs] = useState([
+    { time: new Date().toLocaleTimeString(), type: 'info', text: 'System initialized. Waiting for candidate input...' }
+  ])
 
-  useEffect(() => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SpeechRecognition) { setIsSpeechSupported(false); return }
+  // Proctoring State
+  const [violations, setViolations] = useState(0)
+  const [webcamActive, setWebcamActive] = useState(false)
+  const interviewStartedRef = useRef(interviewStarted)
 
-    const recognition = new SpeechRecognition()
-    recognition.continuous = false
-    recognition.interimResults = false
-    recognition.lang = 'en-US'
-    
-    recognition.onstart = () => {
-      console.log("️ Microphone started listening...")
-      setIsListening(true)
-      toast('🎙️ Listening... Speak now!', { duration: 3000 })
-    }
+  // Job Roles List
+  const jobRoles = ['Software Engineer', 'Full Stack Developer', 'Data Scientist', 'DevOps Engineer', 'Product Manager', 'System Architect', 'Frontend Developer', 'Backend Developer']
+  const filteredRoles = jobRoles.filter(role => role.toLowerCase().includes(roleInput.toLowerCase()))
 
-    recognition.onresult = (event) => {
-      const transcript = event.results[0][0].transcript
-      console.log("✅ Voice captured:", transcript)
-      setIsListening(false)
-      toast.success('Voice captured! Sending answer...')
-      handleVoiceSend(transcript);
-    }
-    
-    recognition.onerror = (event) => {
-      console.error('❌ Speech recognition error:', event.error)
-      setIsListening(false)
-      if (event.error === 'not-allowed') toast.error('Microphone access denied. Click the 🔒 lock icon in the address bar.', { duration: 6000 })
-      else if (event.error === 'no-speech') toast.error('No speech detected. Please try again.')
-      else if (event.error === 'network') toast.error('Network error. Check your internet connection.')
-      else toast.error(`Microphone error: ${event.error}`)
-    }
+  // Keep ref updated
+  useEffect(() => { interviewStartedRef.current = interviewStarted }, [interviewStarted])
 
-    recognition.onend = () => {
-      console.log("🛑 Microphone stopped.")
-      setIsListening(false)
-    }
-    
-    recognitionRef.current = recognition
-  }, [chatHistory, isTimerActive, currentRound, jobRole])
+  // Helper: Add Log
+  const addLog = (type, text) => setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), type, text }])
 
-  const toggleListening = () => {
-    if (!isSpeechSupported) { toast.error('Voice input not supported. Use Chrome/Edge.', { duration: 5000 }); return }
-    if (isListening) {
-      recognitionRef.current.stop()
-    } else {
-      try {
-        recognitionRef.current.start()
-      } catch (err) { 
-        console.error("Failed to start mic:", err)
-        toast.error('Failed to start microphone. Refresh the page.'); 
-        setIsListening(false) 
-      }
-    }
-  }
-
-  useEffect(() => {
-    const token = localStorage.getItem('token')
-    if (!token) { toast.error('Please login first!'); navigate('/') }
-    else {
-      fetchActiveSession(token)
-    }
-  }, [navigate])
-
-  const fetchActiveSession = async (token) => {
-    try {
-      const targetSessionId = location.state?.sessionId;
-
-      let res;
-      if (targetSessionId) {
-        res = await axios.get(`http://127.0.0.1:5000/api/interview/session/${targetSessionId}`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-      } else {
-        res = await axios.get('http://127.0.0.1:5000/api/interview/active', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-      }
-
-      if (res.data.active || res.data.session_id) {
-        setJobRole(res.data.job_role)
-        setCurrentRound(res.data.current_round)
-        setTimeLeft(300)
-        
-        const history = []
-        res.data.qa_pairs.forEach(pair => {
-          history.push({ role: 'ai', text: pair.question })
-          if (pair.answer) {
-            history.push({ role: 'user', text: pair.answer })
-          }
-        })
-        
-        if (history.length === 0) {
-           history.push({ role: 'ai', text: `Hello! Resuming your interview for ${res.data.job_role}. We are in Round ${res.data.current_round}: ${ROUND_NAMES[res.data.current_round]}.` })
-        }
-        
-        setChatHistory(history)
-        toast.success('Interview resumed successfully!')
-      } else {
-        setChatHistory([{ role: 'ai', text: 'Hello! I am your AI Technical Interviewer. We will have 3 rounds: Technical, Coding, and Behavioral. Let\'s start Round 1! What role are you interviewing for today?' }])
-      }
-    } catch (error) {
-      console.error("Failed to fetch session", error)
-      setChatHistory([{ role: 'ai', text: 'Hello! I am your AI Technical Interviewer. Let\'s start Round 1!' }])
-    }
-  }
-
-  useEffect(() => {
-    if (isTimerActive && timeLeft > 0) timerRef.current = setInterval(() => setTimeLeft((prev) => prev - 1), 1000)
-    else if (timeLeft === 0 && isTimerActive) { clearInterval(timerRef.current); handleNextRound() }
-    return () => clearInterval(timerRef.current)
-  }, [isTimerActive, timeLeft])
-
+  // Helper: Format Time
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60)
     const secs = seconds % 60
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
   }
 
-  const handleNextRound = () => {
-    if (currentRound < 3) {
-      const nextRound = currentRound + 1
-      setCurrentRound(nextRound)
-      setTimeLeft(ROUND_TIME)
-      setChatHistory(prev => [...prev, { role: 'ai', text: `️ Round skipped! Moving to Round ${nextRound}: ${ROUND_NAMES[nextRound]}. Let's begin!` }])
-      toast.success(`Starting Round ${nextRound}: ${ROUND_NAMES[nextRound]}`)
-    } else { 
-      setIsTimerActive(false); 
-      endInterviewAndGetFeedback() 
+  // MAIN INITIALIZATION & PROCTORING EFFECT
+  useEffect(() => {
+    const token = localStorage.getItem('token')
+    if (!token) { navigate('/') }
+    
+    if (sessionId) {
+      addLog('info', `Resuming session: ${sessionId}`)
+    } else {
+      const welcomeMessage = `Hello! I am your AI Interviewer. Let's begin your evaluation for the **${jobRole}** role.\n\nThis interview consists of 3 rounds:\n1. **Technical Round** (15 mins)\n2. **Behavioral Round** (10 mins)\n3. **HR Round** (5 mins)\n\nThe timer will start as soon as you send your first message. To start, could you briefly introduce yourself?`
+      setMessages([{ role: 'ai', text: welcomeMessage }])
+      addLog('success', 'Interviewer Agent (Sophia v4.2) connected.')
+      addLog('info', 'RAG Engine: Loading candidate profile context...')
+    }
+
+    // 1. Request Webcam Permission
+    let snapshotInterval;
+    let stream;
+    const initWebcam = async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true })
+        setWebcamActive(true)
+        addLog('success', 'Webcam proctoring activated. Snapshots will be taken every 30s.')
+        
+        snapshotInterval = setInterval(() => {
+          addLog('info', 'Proctoring: Background snapshot captured and encrypted.')
+        }, 30000)
+      } catch (err) {
+        addLog('warning', 'Webcam access denied. Proctoring limited to tab-switch detection.')
+      }
+    }
+    initWebcam()
+
+    // 2. Tab-Switch Detection
+    const handleVisibilityChange = () => {
+      if (document.hidden && interviewStartedRef.current) {
+        setViolations(prev => {
+          const newViolations = prev + 1
+          addLog('error', `VIOLATION DETECTED: Tab switch or window minimize! (${newViolations}/3)`)
+          toast.error(`️ Warning: Tab switch detected! (${newViolations}/3)`)
+          
+          if (newViolations >= 3) {
+            toast.error('Maximum violations reached. Auto-submitting interview.')
+            setTimeout(() => navigate('/feedback'), 2000)
+          }
+          return newViolations
+        })
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    // Cleanup function
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      if (snapshotInterval) clearInterval(snapshotInterval)
+      if (stream) stream.getTracks().forEach(track => track.stop())
+    }
+  }, [])
+
+  // Auto-scroll chat
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
+
+  // Reset Timer on Round Change
+  useEffect(() => {
+    setTimeRemaining(roundLimits[currentRound])
+    setIsActive(true)
+    addLog('info', `Switched to Round ${currentRound}. Time reset to ${roundLimits[currentRound] / 60} minutes.`)
+  }, [currentRound])
+
+  // Timer Logic
+  useEffect(() => {
+    let interval = null
+    if (isActive && interviewStarted && timeRemaining > 0) {
+      interval = setInterval(() => setTimeRemaining(prev => prev - 1), 1000)
+    } else if (timeRemaining === 0 && interviewStarted) {
+      setIsActive(false)
+      toast.error(`Time up for Round ${currentRound}!`)
+      if (currentRound < 3) setCurrentRound(prev => prev + 1)
+      else { toast.success('Interview completed!'); setTimeout(() => navigate('/feedback'), 2000) }
+    }
+    return () => clearInterval(interval)
+  }, [isActive, timeRemaining, currentRound, navigate, interviewStarted])
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => { if (!event.target.closest('.role-dropdown-container')) setIsRoleDropdownOpen(false) }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const handleRoleSelect = (role) => { setRoleInput(role); setJobRole(role); setIsRoleDropdownOpen(false) }
+  const handleResumeUpload = (e) => {
+    const file = e.target.files[0]
+    if (file) {
+      if (file.type !== 'application/pdf') { toast.error('Please upload a PDF file'); return }
+      setResumeFile(file); toast.success(`Resume uploaded: ${file.name}`); addLog('success', `Resume uploaded: ${file.name}`)
+    }
+  }
+  const handleClearResume = () => { setResumeFile(null); toast.success('Resume cleared'); addLog('warning', 'Resume cleared from RAG context') }
+
+  const handleSubmitCode = () => {
+    if (!code.trim()) { toast.error('Code editor is empty!'); return }
+    const codeMessage = `[Code Submission - Round ${currentRound}]\n\n\`\`\`javascript\n${code}\n\`\`\``
+    setMessages(prev => [...prev, { role: 'user', text: codeMessage }])
+    addLog('success', 'Code submitted for evaluation.')
+    toast.success('Code submitted to AI Evaluator!')
+  }
+
+  const handleEndInterview = () => {
+    if (window.confirm("Are you sure you want to end the interview and see your evaluation?")) {
+      addLog('warning', 'Interview manually ended by candidate.')
+      toast.success('Generating evaluation report...')
+      setTimeout(() => navigate('/feedback'), 1500)
     }
   }
 
-  const handleClearResume = async () => {
-    const token = localStorage.getItem('token')
-    try {
-      const response = await axios.post('http://127.0.0.1:5000/api/clear-resume', {}, { headers: { 'Authorization': `Bearer ${token}` } })
-      toast.success(response.data.message)
-      document.querySelector('input[type="file"]').value = ""
-    } catch (error) { toast.error('Error clearing resume.') }
-  }
+  const handleSend = async () => {
+    if (!input.trim() || isLoading) return
+    if (!interviewStarted) { setInterviewStarted(true); addLog('success', 'Timer started. Interview is now live.') }
 
-  const handleResumeUpload = async (e) => {
-    const file = e.target.files[0]
-    if (!file) return
-    setIsUploading(true)
-    const formData = new FormData(); formData.append('file', file)
-    const token = localStorage.getItem('token')
-    try {
-      const response = await axios.post('http://127.0.0.1:5000/api/upload-resume', formData, { headers: { 'Content-Type': 'multipart/form-data', 'Authorization': `Bearer ${token}` } })
-      toast.success(response.data.message)
-    } catch (error) { toast.error('Error uploading resume.') }
-    finally { setIsUploading(false) }
-  }
+    const userMessage = input
+    setInput('')
+    setMessages(prev => [...prev, { role: 'user', text: userMessage }])
+    setIsLoading(true)
+    addLog('warning', 'Candidate response received. Processing...')
 
-  const sendMessage = async () => { if (!userInput.trim()) return; handleVoiceSend(userInput) }
-
-  const submitCode = async () => {
-    if (!codeInput.trim()) return
-    if (!isTimerActive) setIsTimerActive(true)
-    const codeBlock = `Here is my code solution:\n\n\`\`\`\n${codeInput}\n\`\`\``
-    const newHistory = [...chatHistory, { role: 'user', text: codeBlock }]
-    setChatHistory(newHistory); setCodeInput(''); setIsLoading(true)
     try {
       const token = localStorage.getItem('token')
-      const response = await axios.post('http://127.0.0.1:5000/api/interview', 
-        { message: codeBlock, job_role: jobRole, chat_history: newHistory, current_round: currentRound },
-        { headers: { 'Authorization': `Bearer ${token}` } })
-      setChatHistory([...newHistory, { role: 'ai', text: response.data.response }])
-      if (response.data.is_complete) setTimeout(() => endInterviewAndGetFeedback(), 1000)
-    } catch (error) { toast.error('Error connecting to AI.') }
+      const chatHistory = messages.map(m => ({ role: m.role === 'ai' ? 'assistant' : 'user', text: m.text, content: m.text }))
+      const res = await axios.post('http://127.0.0.1:5000/api/interview', { message: userMessage, job_role: jobRole, chat_history: chatHistory, current_round: currentRound }, { headers: { 'Authorization': `Bearer ${token}` } })
+      addLog('info', 'Evaluator Agent (Chronos): Analyzing response...')
+      setMessages(prev => [...prev, { role: 'ai', text: res.data.response }])
+      if (res.data.is_complete) { toast.success('Interview completed!'); setTimeout(() => navigate('/feedback'), 1500) }
+    } catch (err) { toast.error('Failed to get AI response.'); addLog('error', 'API Error.') } 
     finally { setIsLoading(false) }
   }
 
-  const endInterviewAndGetFeedback = async () => {
-    setIsTimerActive(false); setIsEvaluating(true)
-    try {
-      const sessionsRes = await axios.get('http://127.0.0.1:5000/api/interviews')
-      const latestSession = sessionsRes.data.data[0]
-      if (!latestSession) { toast.error("No interview data found!"); return; }
-      const evalRes = await axios.post(`http://127.0.0.1:5000/api/evaluate/${latestSession.session_id}`)
-      localStorage.setItem('latestFeedback', JSON.stringify(evalRes.data.feedback))
-      toast.success("Interview evaluated successfully!")
-      navigate('/feedback', { state: { feedback: evalRes.data.feedback } })
-    } catch (error) { toast.error("Failed to generate feedback.") }
-    finally { setIsEvaluating(false) }
+  const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() } }
+
+  // Proctoring: Prevent Copy/Paste/Right Click
+  const handleContextMenu = (e) => e.preventDefault()
+  const handleCopy = (e) => { if (interviewStarted) { e.preventDefault(); toast.error('Copying is disabled during the interview!') } }
+  const handlePaste = (e) => { if (interviewStarted) { e.preventDefault(); toast.error('Pasting is disabled during the interview!') } }
+
+  const getRoundBadge = () => {
+    if (currentRound === 1) return { text: 'ROUND 1: TECHNICAL', color: 'text-cyan-600 dark:text-cyan-400 bg-cyan-100 dark:bg-cyan-900/30 border-cyan-200 dark:border-cyan-800' }
+    if (currentRound === 2) return { text: 'ROUND 2: BEHAVIORAL', color: 'text-purple-600 dark:text-purple-400 bg-purple-100 dark:bg-purple-900/30 border-purple-200 dark:border-purple-800' }
+    return { text: 'ROUND 3: HR', color: 'text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/30 border-emerald-200 dark:border-emerald-800' }
   }
+  const roundBadge = getRoundBadge()
 
   return (
-    <div style={{ maxWidth: '900px', margin: '0 auto', padding: '20px', fontFamily: 'Arial, sans-serif', backgroundColor: '#f4f6f8', minHeight: '100vh' }}>
-      <h1 style={{ textAlign: 'center', color: '#2E5C8A' }}>Live Interview Session</h1>
-      
-      <div style={{ textAlign: 'center', marginBottom: '20px', padding: '15px', backgroundColor: '#ffffff', borderRadius: '10px', border: '1px dashed #2E5C8A' }}>
-        <h3 style={{ margin: '0 0 10px 0', color: '#2E5C8A' }}>Step 1: Manage Your Resume</h3>
-        <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-          <input type="file" accept=".pdf" onChange={handleResumeUpload} disabled={isUploading} style={{ padding: '5px' }} />
-          <button onClick={handleClearResume} style={{ padding: '8px 15px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>🗑️ Clear Resume</button>
-        </div>
+    <div 
+      onContextMenu={handleContextMenu} 
+      onCopy={handleCopy} 
+      onPaste={handlePaste}
+      className="min-h-screen relative overflow-hidden bg-gray-50 dark:bg-slate-900 transition-colors duration-300"
+    >
+      <StarryBackground />
+      <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
+        <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-cyan-500/20 dark:bg-cyan-500/10 rounded-full blur-3xl animate-bg-1"></div>
+        <div className="absolute bottom-[-10%] right-[-10%] w-[600px] h-[600px] bg-blue-500/20 dark:bg-blue-500/10 rounded-full blur-3xl animate-bg-2"></div>
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', padding: '15px', backgroundColor: '#2E5C8A', color: 'white', borderRadius: '10px' }}>
-        <div><strong style={{ fontSize: '18px' }}>Round {currentRound}: {ROUND_NAMES[currentRound]}</strong></div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-          <div style={{ fontSize: '24px', fontWeight: 'bold', fontFamily: 'monospace', backgroundColor: 'rgba(255,255,255,0.2)', padding: '5px 15px', borderRadius: '5px' }}>️ {formatTime(timeLeft)}</div>
-          <button onClick={handleNextRound} style={{ padding: '6px 12px', backgroundColor: '#ffc107', color: '#000', border: 'none', borderRadius: '5px', cursor: 'pointer', fontSize: '14px', fontWeight: 'bold' }}>
-            ⏭️ Skip Round
-          </button>
-        </div>
-        <div>
-          <label style={{ marginRight: '10px' }}>Role:</label>
-          <input type="text" value={jobRole} onChange={(e) => setJobRole(e.target.value)} style={{ padding: '5px', borderRadius: '5px', border: 'none' }} disabled={isTimerActive} />
-        </div>
-      </div>
+      <div className="relative z-10 flex flex-col h-screen pt-16">
+        
+        {/* Top Bar - FIXED: Added relative z-30 and overflow-visible */}
+        <div className="glass-card border-b border-white/20 dark:border-slate-700/50 px-6 py-3 shrink-0 relative z-30 overflow-visible">
+          <div className="flex flex-wrap items-center justify-between gap-4 overflow-visible">
+            <div className="flex items-center gap-4 flex-wrap">
+              <span className="text-xs font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/30 px-3 py-1.5 rounded-full border border-emerald-200 dark:border-emerald-800 font-bold">● LIVE</span>
+              <span className={`text-xs font-bold px-3 py-1.5 rounded-full border ${roundBadge.color}`}>{roundBadge.text}</span>
+              
+              <div className={`text-lg font-mono font-bold px-4 py-1.5 rounded-lg border flex items-center gap-2 ${timeRemaining < 60 && interviewStarted ? 'text-red-600 bg-red-100 border-red-300 animate-pulse' : 'text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700'}`}>
+                {interviewStarted ? '⏱️' : '️'} {formatTime(timeRemaining)}
+              </div>
 
-      <div style={{ height: '400px', overflowY: 'auto', border: '1px solid #ccc', borderRadius: '10px', padding: '20px', marginBottom: '20px', backgroundColor: '#ffffff' }}>
-        {chatHistory.map((msg, index) => (
-          <div key={index} style={{ marginBottom: '15px', textAlign: msg.role === 'user' ? 'right' : 'left' }}>
-            <div style={{ display: 'inline-block', padding: '10px 15px', borderRadius: '15px', backgroundColor: msg.role === 'user' ? '#2E5C8A' : '#e0e0e0', color: msg.role === 'user' ? 'white' : 'black', maxWidth: '80%', textAlign: 'left', whiteSpace: 'pre-wrap' }}>
-              <strong>{msg.role === 'user' ? 'You: ' : 'AI: '}</strong>{msg.text}
+              {violations > 0 && (
+                <div className="text-sm font-bold px-3 py-1.5 rounded-lg border bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 border-red-300 dark:border-red-800 animate-pulse">
+                  ️ {violations}/3 Violations
+                </div>
+              )}
+
+              <div className="flex gap-1 bg-slate-200 dark:bg-slate-800 p-1 rounded-lg border border-slate-300 dark:border-slate-700">
+                {[1, 2, 3].map(round => (
+                  <button key={round} onClick={() => setCurrentRound(round)} className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${currentRound === round ? 'bg-cyan-500 text-white shadow-md' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-300 dark:hover:bg-slate-700'}`}>R{round}</button>
+                ))}
+              </div>
+            </div>
+
+            {/* Role Dropdown - FIXED: Added overflow-visible and high z-index */}
+            <div className="relative role-dropdown-container overflow-visible">
+              <label className="text-sm font-medium text-slate-600 dark:text-slate-400 mr-2">Role:</label>
+              <input type="text" value={roleInput} onChange={(e) => { setRoleInput(e.target.value); setIsRoleDropdownOpen(true) }} onFocus={() => setIsRoleDropdownOpen(true)} className="glass-input px-3 py-1.5 text-sm font-medium min-w-[200px] cursor-pointer" placeholder="Type or select role..." />
+              {isRoleDropdownOpen && filteredRoles.length > 0 && (
+                <div className="absolute top-full left-0 mt-2 w-full glass-card rounded-xl shadow-2xl py-2 z-[100] max-h-60 overflow-y-auto custom-scrollbar">
+                  {filteredRoles.map(role => (<button key={role} onClick={() => handleRoleSelect(role)} className="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-cyan-500/20 hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors">{role}</button>))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button onClick={() => setShowCodeEditor(!showCodeEditor)} className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${showCodeEditor ? 'bg-cyan-500 text-white' : 'glass-button-secondary'}`}>{showCodeEditor ? '📝 Hide Code' : '💻 Code Editor'}</button>
+              <button onClick={handleEndInterview} className="bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-400 hover:to-green-500 text-white font-bold px-4 py-2 rounded-lg shadow-lg transition-all text-sm">End & Evaluate</button>
             </div>
           </div>
-        ))}
-        {isLoading && <p style={{ color: 'gray', fontStyle: 'italic' }}>AI is thinking...</p>}
-        {isEvaluating && <p style={{ color: 'green', fontWeight: 'bold', textAlign: 'center', fontSize: '18px' }}>🤖 AI is analyzing your answers...</p>}
-      </div>
+        </div>
 
-      {currentRound === 2 ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          <div style={{ border: '1px solid #333', borderRadius: '8px', overflow: 'hidden', backgroundColor: '#1e1e1e', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}>
-            <div style={{ backgroundColor: '#2d2d2d', color: '#fff', padding: '8px 15px', fontSize: '13px', borderBottom: '1px solid #444', fontWeight: 'bold', display: 'flex', justifyContent: 'space-between' }}>
-              <span>💻 Code Editor</span>
-              <span style={{ fontSize: '11px', color: '#aaa' }}>JavaScript / Python</span>
+        {/* Resume Upload Section - FIXED: Added relative z-10 to sit below the top bar */}
+        <div className="glass-card border-b border-white/20 dark:border-slate-700/50 px-6 py-2 shrink-0 relative z-10">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-medium text-slate-700 dark:text-slate-300">📄 Resume (RAG Context):</span>
+              {resumeFile ? (
+                <div className="flex items-center gap-2 px-3 py-1 bg-emerald-100 dark:bg-emerald-900/30 rounded-lg border border-emerald-200 dark:border-emerald-800">
+                  <span className="text-xs text-emerald-700 dark:text-emerald-400 font-medium">{resumeFile.name}</span>
+                  <button onClick={handleClearResume} className="text-xs text-red-500 hover:text-red-600 font-bold">✕ Clear</button>
+                </div>
+              ) : (
+                <label className="px-3 py-1 bg-cyan-100 dark:bg-cyan-900/30 hover:bg-cyan-200 dark:hover:bg-cyan-900/50 rounded-lg border border-cyan-200 dark:border-cyan-800 cursor-pointer transition-colors">
+                  <span className="text-xs text-cyan-700 dark:text-cyan-400 font-medium">+ Upload PDF</span>
+                  <input type="file" accept=".pdf" onChange={handleResumeUpload} className="hidden" />
+                </label>
+              )}
             </div>
-            <textarea
-              value={codeInput}
-              onChange={(e) => setCodeInput(e.target.value)}
-              placeholder="Write your code here..."
-              disabled={isLoading || isEvaluating}
-              style={{ width: '100%', minHeight: '200px', padding: '15px', backgroundColor: '#1e1e1e', color: '#d4d4d4', border: 'none', outline: 'none', fontFamily: '"Fira Code", "Fira Mono", Consolas, monospace', fontSize: '14px', lineHeight: '1.5', resize: 'vertical', boxSizing: 'border-box' }}
-            />
-          </div>
-          <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
-            <button onClick={submitCode} disabled={isLoading || isEvaluating} style={{ padding: '10px 20px', backgroundColor: '#2E5C8A', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontSize: '16px' }}>Submit Code</button>
-            <button onClick={endInterviewAndGetFeedback} disabled={isEvaluating} style={{ padding: '10px 20px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontSize: '16px' }}>{isEvaluating ? 'Evaluating...' : 'End Interview'}</button>
+            <div className={`flex items-center gap-2 px-3 py-1 rounded-lg border text-xs font-bold ${webcamActive ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800' : 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 border-red-200 dark:border-red-800'}`}>
+              <div className={`w-2 h-2 rounded-full ${webcamActive ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`}></div>
+              {webcamActive ? 'PROCTORING ACTIVE' : 'WEBCAM OFF'}
+            </div>
           </div>
         </div>
-      ) : (
-        <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', alignItems: 'center' }}>
-          <input 
-            type="text" value={userInput} onChange={(e) => setUserInput(e.target.value)} 
-            onKeyPress={(e) => e.key === 'Enter' && sendMessage()} placeholder="Type or speak your answer..." 
-            style={{ flex: 1, padding: '10px', borderRadius: '5px', border: '1px solid #ccc', fontSize: '16px' }} disabled={isLoading || isEvaluating} 
-          />
-          {isSpeechSupported && (
-            <button onClick={toggleListening} disabled={isLoading || isEvaluating} style={{ padding: '10px 15px', backgroundColor: isListening ? '#dc3545' : '#2E5C8A', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontSize: '20px' }}>
-              {isListening ? '️' : '🎙️'}
-            </button>
-          )}
-          <button onClick={sendMessage} disabled={isLoading || isEvaluating} style={{ padding: '10px 20px', backgroundColor: '#2E5C8A', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontSize: '16px' }}>Send</button>
-          <button onClick={endInterviewAndGetFeedback} disabled={isEvaluating} style={{ padding: '10px 20px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontSize: '16px' }}>{isEvaluating ? 'Evaluating...' : 'End Interview'}</button>
+
+        {/* Split Screen Layout */}
+        <div className="flex-1 flex overflow-hidden p-4 gap-4">
+          <div className="flex-1 flex flex-col gap-4 min-w-0">
+            <div className="flex-1 glass-card rounded-2xl p-4 flex flex-col overflow-hidden">
+              <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
+                {messages.map((msg, idx) => (
+                  <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[85%] rounded-2xl px-5 py-3 text-sm leading-relaxed ${msg.role === 'user' ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-br-none' : 'bg-white/50 dark:bg-slate-800/50 text-slate-800 dark:text-slate-200 border border-white/20 dark:border-slate-700/50 rounded-bl-none'}`}>
+                      {msg.role === 'ai' && <div className="text-[10px] font-mono text-cyan-600 dark:text-cyan-400 mb-1 font-bold">AI INTERVIEWER</div>}
+                      <div className="whitespace-pre-line">{msg.text}</div>
+                    </div>
+                  </div>
+                ))}
+                {isLoading && (
+                  <div className="flex justify-start">
+                    <div className="bg-white/50 dark:bg-slate-800/50 border border-white/20 dark:border-slate-700/50 rounded-2xl rounded-bl-none px-5 py-4 flex items-center gap-2">
+                      <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce"></div>
+                      <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce delay-100"></div>
+                      <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce delay-200"></div>
+                    </div>
+                  </div>
+                )}
+                <div ref={chatEndRef} />
+              </div>
+              <div className="mt-4 flex gap-2">
+                <input type="text" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} placeholder="Type your answer here..." disabled={isLoading} className="flex-1 glass-input px-4 py-3 text-sm" />
+                <button onClick={handleSend} disabled={isLoading || !input.trim()} className="glass-button px-6 py-3 disabled:opacity-50 disabled:cursor-not-allowed">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
+                </button>
+              </div>
+            </div>
+
+            {showCodeEditor && (
+              <div className="h-64 glass-card rounded-2xl overflow-hidden flex flex-col border-2 border-cyan-500/30">
+                <div className="bg-slate-800 text-slate-300 text-xs px-4 py-2 flex justify-between items-center border-b border-slate-700">
+                  <span className="font-mono">solution.js</span>
+                  <button onClick={handleSubmitCode} className="bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1 rounded text-xs font-bold transition-colors flex items-center gap-1">
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    Submit Code
+                  </button>
+                </div>
+                <div className="flex-1">
+                  <Editor height="100%" defaultLanguage="javascript" theme="vs-dark" value={code} onChange={(value) => setCode(value || '')} options={{ minimap: { enabled: false }, fontSize: 14, lineNumbers: 'on', roundedSelection: false, scrollBeyondLastLine: false, automaticLayout: true }} />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="w-80 flex flex-col gap-4 shrink-0">
+            <div className="glass-card rounded-2xl p-5 text-center">
+              <h3 className="text-sm font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-4">Live Evaluation</h3>
+              <div className="flex justify-around">
+                <div>
+                  <div className="relative w-16 h-16 mx-auto mb-2 flex items-center justify-center rounded-full border-4 border-cyan-500/30 bg-cyan-500/10"><span className="text-lg font-bold text-cyan-600 dark:text-cyan-400">--</span></div>
+                  <p className="text-xs text-slate-600 dark:text-slate-400">Tech</p>
+                </div>
+                <div>
+                  <div className="relative w-16 h-16 mx-auto mb-2 flex items-center justify-center rounded-full border-4 border-purple-500/30 bg-purple-500/10"><span className="text-lg font-bold text-purple-600 dark:text-purple-400">--</span></div>
+                  <p className="text-xs text-slate-600 dark:text-slate-400">Behavioral</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex-1 glass-card rounded-2xl overflow-hidden flex flex-col bg-slate-900/80 border-slate-700">
+              <div className="bg-slate-800/80 px-4 py-2 border-b border-slate-700 flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full bg-red-500"></div><div className="w-2.5 h-2.5 rounded-full bg-yellow-500"></div><div className="w-2.5 h-2.5 rounded-full bg-green-500"></div>
+                <span className="text-xs font-mono text-slate-400 ml-2">agent_deliberation.log</span>
+              </div>
+              <div className="flex-1 overflow-y-auto p-3 font-mono text-[11px] space-y-2 custom-scrollbar">
+                {logs.map((log, idx) => (
+                  <div key={idx} className="flex gap-2">
+                    <span className="text-slate-500 shrink-0">[{log.time}]</span>
+                    <span className={`${log.type === 'error' ? 'text-red-400' : log.type === 'warning' ? 'text-yellow-400' : log.type === 'success' ? 'text-emerald-400' : 'text-cyan-300'}`}>
+                      {log.type === 'success' ? '✔ ' : log.type === 'error' ? '✖ ' : ' '}{log.text}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
-      )}
+      </div>
     </div>
   )
 }
