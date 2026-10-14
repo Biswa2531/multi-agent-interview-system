@@ -44,10 +44,16 @@ function Interview() {
   const [webcamActive, setWebcamActive] = useState(false)
   const interviewStartedRef = useRef(interviewStarted)
   const [hintsUsed, setHintsUsed] = useState(0)
-  
-  // Live Scores State (0 to 10)
   const [techScore, setTechScore] = useState(0)
   const [behavScore, setBehavScore] = useState(0)
+
+  // Audio Visualizer State
+  const [isListening, setIsListening] = useState(false)
+  const [audioLevels, setAudioLevels] = useState(Array(8).fill(0))
+  const audioContextRef = useRef(null)
+  const analyserRef = useRef(null)
+  const streamRef = useRef(null)
+  const animationRef = useRef(null)
 
   // Job Roles List
   const jobRoles = ['Software Engineer', 'Full Stack Developer', 'Data Scientist', 'DevOps Engineer', 'Product Manager', 'System Architect', 'Frontend Developer', 'Backend Developer']
@@ -81,18 +87,57 @@ function Interview() {
 
   // Ask for a Hint Function
   const handleAskHint = () => {
-    if (currentRound !== 1) {
-      toast.error('Hints are only available during the Technical Round!')
-      return
-    }
-    if (hintsUsed >= 3) {
-      toast.error('Maximum hints reached for this session.')
-      return
-    }
+    if (currentRound !== 1) { toast.error('Hints are only available during the Technical Round!'); return }
+    if (hintsUsed >= 3) { toast.error('Maximum hints reached for this session.'); return }
     setHintsUsed(prev => prev + 1)
     addLog('warning', `Hint requested by candidate. Score penalty applied (-5%). Hint #${hintsUsed + 1} used.`)
     toast.success('💡 Hint: Try breaking the problem down into smaller functions first!')
     setMessages(prev => [...prev, { role: 'ai', text: `**[HINT PROVIDED]**\nSince you asked for a clue, try breaking the problem down into smaller, manageable functions. Remember to handle edge cases! (Note: 5% score penalty applied).` }])
+  }
+
+  // Toggle Microphone & Visualizer
+  const toggleListening = async () => {
+    if (isListening) {
+      setIsListening(false)
+      cancelAnimationFrame(animationRef.current)
+      if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop())
+      if (audioContextRef.current) audioContextRef.current.close()
+      setAudioLevels(Array(8).fill(0))
+      return
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      streamRef.current = stream
+      
+      const AudioContext = window.AudioContext || window.webkitAudioContext
+      const audioContext = new AudioContext()
+      audioContextRef.current = audioContext
+      
+      const analyser = audioContext.createAnalyser()
+      analyserRef.current = analyser
+      analyser.fftSize = 64 
+      
+      const source = audioContext.createMediaStreamSource(stream)
+      source.connect(analyser)
+      
+      const bufferLength = analyser.frequencyBinCount
+      const dataArray = new Uint8Array(bufferLength)
+      
+      setIsListening(true)
+      
+      const updateVisualizer = () => {
+        analyser.getByteFrequencyData(dataArray)
+        const levels = Array.from(dataArray.slice(0, 8)).map(value => (value / 255) * 100)
+        setAudioLevels(levels)
+        animationRef.current = requestAnimationFrame(updateVisualizer)
+      }
+      updateVisualizer()
+      addLog('info', 'Microphone activated. Audio visualizer is live.')
+    } catch (err) {
+      toast.error('Microphone access denied.')
+      addLog('error', 'Microphone access denied.')
+    }
   }
 
   // MAIN INITIALIZATION & PROCTORING EFFECT
@@ -117,10 +162,7 @@ function Interview() {
         stream = await navigator.mediaDevices.getUserMedia({ video: true })
         setWebcamActive(true)
         addLog('success', 'Webcam proctoring activated. Snapshots will be taken every 30s.')
-        
-        snapshotInterval = setInterval(() => {
-          addLog('info', 'Proctoring: Background snapshot captured and encrypted.')
-        }, 30000)
+        snapshotInterval = setInterval(() => { addLog('info', 'Proctoring: Background snapshot captured and encrypted.') }, 30000)
       } catch (err) {
         addLog('warning', 'Webcam access denied. Proctoring limited to tab-switch detection.')
       }
@@ -134,11 +176,7 @@ function Interview() {
           const newViolations = prev + 1
           addLog('error', `VIOLATION DETECTED: Tab switch or window minimize! (${newViolations}/3)`)
           toast.error(`⚠️ Warning: Tab switch detected! (${newViolations}/3)`)
-          
-          if (newViolations >= 3) {
-            toast.error('Maximum violations reached. Auto-submitting interview.')
-            setTimeout(() => navigate('/feedback'), 2000)
-          }
+          if (newViolations >= 3) { toast.error('Maximum violations reached. Auto-submitting interview.'); setTimeout(() => navigate('/feedback'), 2000) }
           return newViolations
         })
       }
@@ -149,6 +187,10 @@ function Interview() {
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       if (snapshotInterval) clearInterval(snapshotInterval)
       if (stream) stream.getTracks().forEach(track => track.stop())
+      // Cleanup Audio Visualizer
+      cancelAnimationFrame(animationRef.current)
+      if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop())
+      if (audioContextRef.current) audioContextRef.current.close()
     }
   }, [])
 
@@ -199,7 +241,6 @@ function Interview() {
     setMessages(prev => [...prev, { role: 'user', text: codeMessage }])
     addLog('success', 'Code submitted for evaluation.')
     toast.success('Code submitted to AI Evaluator!')
-    // Simulate score update on code submission
     setTechScore(prev => Math.min(prev + Math.random() * 2 + 1, 10))
   }
 
@@ -227,11 +268,8 @@ function Interview() {
       const res = await axios.post('http://127.0.0.1:5000/api/interview', { message: userMessage, job_role: jobRole, chat_history: chatHistory, current_round: currentRound }, { headers: { 'Authorization': `Bearer ${token}` } })
       addLog('info', 'Evaluator Agent (Chronos): Analyzing response...')
       setMessages(prev => [...prev, { role: 'ai', text: res.data.response }])
-      
-      // Simulate live score updates
       setTechScore(prev => Math.min(prev + Math.random() * 1.5, 10))
       setBehavScore(prev => Math.min(prev + Math.random() * 1.5, 10))
-
       if (res.data.is_complete) { toast.success('Interview completed!'); setTimeout(() => navigate('/feedback'), 1500) }
     } catch (err) { toast.error('Failed to get AI response.'); addLog('error', 'API Error.') } 
     finally { setIsLoading(false) }
@@ -366,9 +404,45 @@ function Interview() {
                 )}
                 <div ref={chatEndRef} />
               </div>
-              <div className="mt-4 flex gap-2">
-                <input type="text" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} placeholder="Type your answer here..." disabled={isLoading} className="flex-1 glass-input px-4 py-3 text-sm" />
-                <button onClick={handleSend} disabled={isLoading || !input.trim()} className="glass-button px-6 py-3 disabled:opacity-50 disabled:cursor-not-allowed">
+
+              {/* Input Area with Audio Visualizer */}
+              <div className="mt-4 flex gap-2 items-center">
+                <button 
+                  onClick={toggleListening}
+                  className={`p-3 rounded-lg transition-all ${isListening ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/30' : 'glass-button-secondary'}`}
+                  title={isListening ? "Stop Listening" : "Start Listening"}
+                >
+                  {isListening ? (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" /></svg>
+                  ) : (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
+                  )}
+                </button>
+
+                <div className="flex items-center gap-1 h-8 px-2 glass-card rounded-lg min-w-[60px] justify-center">
+                  {audioLevels.map((level, index) => (
+                    <div 
+                      key={index}
+                      className="w-1.5 bg-gradient-to-t from-cyan-500 to-blue-500 rounded-full transition-all duration-75"
+                      style={{ height: `${Math.max(level, 10)}%` }}
+                    ></div>
+                  ))}
+                </div>
+
+                <input 
+                  type="text" 
+                  value={input} 
+                  onChange={(e) => setInput(e.target.value)} 
+                  onKeyDown={handleKeyDown} 
+                  placeholder={isListening ? "Listening... (Type your answer)" : "Type your answer here..."} 
+                  disabled={isLoading} 
+                  className="flex-1 glass-input px-4 py-3 text-sm" 
+                />
+                <button 
+                  onClick={handleSend} 
+                  disabled={isLoading || !input.trim()} 
+                  className="glass-button px-6 py-3 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
                 </button>
               </div>
@@ -424,7 +498,6 @@ function Interview() {
             <div className="glass-card rounded-2xl p-5 text-center">
               <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-4">Live Evaluation</h3>
               <div className="flex justify-around">
-                
                 <div className="flex flex-col items-center">
                   <div className="w-16 h-16 relative">
                     <ResponsiveContainer width="100%" height="100%">
@@ -452,7 +525,6 @@ function Interview() {
                   </div>
                   <p className="text-[10px] font-medium text-slate-600 dark:text-slate-400 mt-1">Behavioral</p>
                 </div>
-
               </div>
               <p className="text-[10px] text-slate-500 dark:text-slate-500 mt-4 italic">Scores update dynamically based on AI analysis.</p>
             </div>
