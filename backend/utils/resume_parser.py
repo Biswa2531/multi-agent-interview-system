@@ -1,44 +1,66 @@
 import os
 import chromadb
 from pypdf import PdfReader
+# FIXED: Updated import for newer LangChain versions
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-# Initialize ChromaDB client
-client = chromadb.PersistentClient(path="./chroma_db_storage")
-collection = client.get_or_create_collection(name="candidate_resumes")
+# Initialize a persistent ChromaDB client in the backend folder
+CHROMA_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "chroma_db")
+os.makedirs(CHROMA_DB_PATH, exist_ok=True)
+chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+collection = chroma_client.get_or_create_collection(name="resumes")
 
 def process_resume(file_path, user_id):
+    """Extracts text from PDF, chunks it, and stores it in ChromaDB."""
     try:
+        # 1. Extract text from PDF
         reader = PdfReader(file_path)
-        full_text = ""
+        text = ""
         for page in reader.pages:
-            full_text += page.extract_text() + "\n"
+            text += page.extract_text() + "\n"
+        
+        if not text.strip():
+            return "Error: Could not extract text from PDF. Is it a scanned image?"
 
-        chunks = full_text.split('\n\n')
-        chunks = [c.strip() for c in chunks if len(c.strip()) > 50]
+        # 2. Delete old resume data for this user (if any)
+        try:
+            collection.delete(where={"user_id": str(user_id)})
+        except:
+            pass
 
-        if not chunks:
-            return "Error: Could not extract meaningful text from PDF."
+        # 3. Chunk the text
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=500,
+            chunk_overlap=50,
+            length_function=len
+        )
+        chunks = text_splitter.split_text(text)
 
-        ids = [f"chunk_{i}_{user_id}_{os.path.basename(file_path)}" for i in range(len(chunks))]
-        metadatas = [{"user_id": str(user_id)} for _ in chunks]
+        # 4. Store in ChromaDB
+        if chunks:
+            collection.add(
+                documents=chunks,
+                metadatas=[{"user_id": str(user_id), "chunk_index": i} for i in range(len(chunks))],
+                ids=[f"{user_id}_{i}" for i in range(len(chunks))]
+            )
+            return f"Successfully processed and indexed {len(chunks)} chunks of your resume."
+        else:
+            return "Error: Resume text was too short to process."
 
-        collection.add(documents=chunks, ids=ids, metadatas=metadatas)
-        return f"✅ Successfully processed resume! Stored {len(chunks)} text chunks in ChromaDB."
     except Exception as e:
-        return f"❌ Error processing resume: {str(e)}"
+        return f"Error processing resume: {str(e)}"
 
 def get_resume_context(user_id):
+    """Queries ChromaDB to get relevant resume context for the user."""
     try:
-        # Broader query to ensure we catch the resume text
-        results = collection.query(
-            query_texts=["skills experience education projects technologies"], 
-            where={"user_id": str(user_id)}, 
-            n_results=3 
+        # Fetch all chunks for this user to give the AI full context
+        results = collection.get(
+            where={"user_id": str(user_id)},
+            limit=10 # Fetch up to 10 chunks
         )
-        
-        if results and results['documents'] and results['documents'][0]:
-            return "\n\n".join(results['documents'][0])
-        return ""
+        if results and results['documents']:
+            return "\n\n---\n\n".join(results['documents'])
+        return "No resume context found for this user."
     except Exception as e:
         print(f"ChromaDB Query Error: {e}")
-        return ""
+        return "No resume context found."

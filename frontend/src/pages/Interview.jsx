@@ -91,7 +91,7 @@ function Interview() {
     if (hintsUsed >= 3) { toast.error('Maximum hints reached for this session.'); return }
     setHintsUsed(prev => prev + 1)
     addLog('warning', `Hint requested by candidate. Score penalty applied (-5%). Hint #${hintsUsed + 1} used.`)
-    toast.success('💡 Hint: Try breaking the problem down into smaller functions first!')
+    toast.success(' Hint: Try breaking the problem down into smaller functions first!')
     setMessages(prev => [...prev, { role: 'ai', text: `**[HINT PROVIDED]**\nSince you asked for a clue, try breaking the problem down into smaller, manageable functions. Remember to handle edge cases! (Note: 5% score penalty applied).` }])
   }
 
@@ -193,6 +193,14 @@ function Interview() {
       if (audioContextRef.current) audioContextRef.current.close()
     }
   }, [])
+
+  // NEW: Update Welcome Message if Job Role changes
+  useEffect(() => {
+    if (messages.length === 1 && messages[0].role === 'ai') {
+      const newWelcomeMessage = `Hello! I am your AI Interviewer. Let's begin your evaluation for the **${jobRole}** role.\n\nThis interview consists of 3 rounds:\n1. **Technical Round** (15 mins)\n2. **Behavioral Round** (10 mins)\n3. **HR Round** (5 mins)\n\nThe timer will start as soon as you send your first message. To start, could you briefly introduce yourself?`;
+      setMessages([{ role: 'ai', text: newWelcomeMessage }]);
+    }
+  }, [jobRole]);
 
   // Auto-scroll chat
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])

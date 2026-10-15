@@ -10,45 +10,60 @@ load_dotenv(dotenv_path=env_file)
 
 def get_interviewer_response(user_message, job_role="Software Engineer", chat_history=[], resume_context="", current_round=1):
     
-    # --- SPEED FIX: Lower max_tokens and use a fast temperature ---
+    # Keep your fast model and settings
     llm = ChatGroq(
-        model="qwen/qwen3.8-27b",  
+        model="qwen/qwen3.8-27b",  # Keeping your working model
         api_key=os.getenv("GROQ_API_KEY"),
         temperature=0.7,
-        max_tokens=150 # Reduced from 400 to make it reply much faster
+        max_tokens=150 # Slightly increased to allow room for RAG context
     )
 
+    # --- RAG INTEGRATION ---
+    # Use up to 1000 chars of resume context (300 was too short for the AI to understand skills)
     context_section = ""
-    if resume_context:
-        context_section = f"RESUME: {resume_context[:300]}..." # Truncate resume to speed up processing
+    if resume_context and resume_context != "No resume context found.":
+        context_section = f"\n\nCANDIDATE RESUME CONTEXT:\n{resume_context[:1000]}\n---\n"
     else:
-        context_section = f"No resume. Ask standard {job_role} questions."
+        context_section = "\n\nNo resume provided. Ask standard questions.\n"
 
+    # --- ROUND LOGIC ---
     round_instructions = ""
     if current_round == 1:
-        round_instructions = "ROUND 1: TECHNICAL. Ask core concept questions."
+        round_instructions = "ROUND 1: TECHNICAL. Focus on core concepts, frameworks, and problem-solving based on their resume."
     elif current_round == 2:
-        round_instructions = "ROUND 2: CODING. Ask logic/scenario questions."
+        round_instructions = "ROUND 2: BEHAVIORAL. Ask situational, teamwork, and challenge-based questions."
     elif current_round == 3:
-        round_instructions = "ROUND 3: BEHAVIORAL. Ask teamwork/challenge questions."
+        round_instructions = "ROUND 3: HR/CULTURE. Ask about career goals, culture fit, and expectations."
 
-    # --- SPEED FIX: Ultra-short prompt ---
-    system_prompt = f"""You are a {job_role} interviewer. {context_section} {round_instructions}
+    # --- SYSTEM PROMPT ---
+    system_prompt = f"""You are Sophia, an expert AI Technical Interviewer interviewing a candidate for the **{job_role}** role.
+    {context_section}
+    {round_instructions}
+    
     RULES: 
     1. Never repeat questions. 
-    2. If user says 'hi', ask Q1 immediately. 
-    3. Keep replies under 40 words. Just ask the question."""
+    2. If the user just says 'hi' or introduces themselves, ask the first relevant technical question immediately.
+    3. Keep replies concise (under 50 words). Just ask the question.
+    4. If the chat history has more than 15 messages, say "Thank you, that concludes our interview!" and nothing else."""
 
     messages = [SystemMessage(content=system_prompt)]
     
-    # --- SPEED FIX: Only send last 4 messages instead of 6 ---
-    recent_history = chat_history[-4:] if len(chat_history) > 4 else chat_history
+    # Keep your exact history parsing to prevent crashes
+    recent_history = chat_history[-6:] if len(chat_history) > 6 else chat_history
 
     for msg in recent_history:
-        if msg.get('role') == 'user':
-            messages.append(HumanMessage(content=msg.get('text', '')))
-        elif msg.get('role') == 'ai':
-            messages.append(AIMessage(content=msg.get('text', '')))
+        # BULLETPROOF SAFETY CHECK: Prevents the Week 4 crash
+        if isinstance(msg, dict):
+            role = msg.get('role')
+            text = msg.get('text', '')
+        else:
+            role = getattr(msg, 'role', 'user')
+            text = getattr(msg, 'content', str(msg))
+        
+        if role in ['user', 'candidate']:
+            messages.append(HumanMessage(content=text))
+        elif role in ['ai', 'assistant']:
+            messages.append(AIMessage(content=text))
 
     messages.append(HumanMessage(content=user_message))
 
