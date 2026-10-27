@@ -10,15 +10,15 @@ backend_dir = Path(__file__).parent.parent
 env_file = backend_dir / '.env'
 load_dotenv(dotenv_path=env_file)
 
-def evaluate_interview(qa_pairs, job_role):
+def evaluate_interview(qa_pairs, job_role, resume_context=""):
     llm = ChatGroq(
         model="qwen/qwen3.8-27b",
         api_key=os.getenv("GROQ_API_KEY"),
-        temperature=0.3,
-        max_tokens=600
+        temperature=0.3, # Low temp for objective, consistent grading
+        max_tokens=800
     )
 
-    # Format QA pairs clearly so the AI can read them easily
+    # Format QA pairs clearly
     qa_text = ""
     for i, qa in enumerate(qa_pairs, 1):
         qa_text += f"\n--- Question {i} ---\n"
@@ -28,9 +28,18 @@ def evaluate_interview(qa_pairs, job_role):
     if not qa_pairs:
         qa_text = "No questions were asked in this interview."
 
-    # STRICT PROMPT TO FORCE AI TO READ THE ANSWERS
-    system_prompt = f"""You are an expert technical interviewer evaluating a candidate for a {job_role} role.
+    # Add Resume Context to the prompt
+    context_section = ""
+    if resume_context and resume_context != "No resume context found.":
+        context_section = f"\n\nCANDIDATE RESUME CONTEXT:\n{resume_context[:800]}\n"
+
+    # STRICT PROMPT TO FORCE AI TO CROSS-REFERENCE RESUME
+    system_prompt = f"""You are Chronos, an expert AI Technical Evaluator and Career Coach.
+    You are evaluating a candidate for a **{job_role}** role.
+    {context_section}
+    
     Read the interview transcript below CAREFULLY. Look at the candidate's actual answers (A:).
+    Cross-reference their answers with their Resume Context to check for consistency and depth.
     Provide fair, constructive feedback based on what they actually wrote.
     
     You MUST reply with ONLY valid JSON. No markdown, no explanations.

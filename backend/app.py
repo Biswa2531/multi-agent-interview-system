@@ -250,14 +250,9 @@ def get_interviews():
         # --- FOOLPROOF IST CONVERSION ---
         raw_time = session.started_at
         if raw_time:
-            # 1. If the database stored a "naive" time (no timezone), assume it's UTC
             if raw_time.tzinfo is None:
                 raw_time = raw_time.replace(tzinfo=datetime.timezone.utc)
-            
-            # 2. Convert UTC to IST
             ist_time = raw_time.astimezone(IST)
-            
-            # 3. Format it into a clean string: "11 Oct 2026, 02:30 PM"
             date_str = ist_time.strftime("%d %b %Y, %I:%M %p")
         else:
             date_str = "Unknown Date"
@@ -266,40 +261,63 @@ def get_interviews():
             "session_id": session.session_id, 
             "job_role": session.job_role, 
             "status": session.status,
-            "started_at": date_str, # Sending the clean, pre-formatted IST string
+            "started_at": date_str,
             "technical_score": feedback.technical_score if feedback else None,
             "behavioral_score": feedback.behavioral_score if feedback else None
         })
     result.reverse()
     return jsonify({"status": "success", "data": result})
 
+# ==============================================================================
+# UPDATED: RAG-Aware Evaluation Route
+# ==============================================================================
 @app.route('/api/evaluate/<int:session_id>', methods=['POST'])
-def evaluate_session(session_id):
+@token_required
+def evaluate_session(current_user, session_id):
     try:
         session = InterviewSession.query.get(session_id)
-        if not session: return jsonify({"error": "Not found"}), 404
+        if not session: 
+            return jsonify({"error": "Session not found"}), 404
+            
         questions = Question.query.filter_by(session_id=session_id).all()
-        qa_pairs = [{"question": q.question_text, "answer": Response.query.filter_by(question_id=q.question_id).first().answer_text if Response.query.filter_by(question_id=q.question_id).first() else "No answer"} for q in questions]
+        qa_pairs = [{
+            "question": q.question_text, 
+            "answer": Response.query.filter_by(question_id=q.question_id).first().answer_text if Response.query.filter_by(question_id=q.question_id).first() else "No answer"
+        } for q in questions]
         
-        feedback_data = evaluate_interview(qa_pairs, session.job_role)
-        
-        db.session.add(Feedback(
-            session_id=session_id, user_id=session.user_id,
-            technical_score=int(feedback_data.get("technical_score", 5)),
-            behavioral_score=int(feedback_data.get("behavioral_score", 5)),
-            strengths=str(feedback_data.get("strengths", "")),
-            weaknesses=str(feedback_data.get("weaknesses", "")),
-            career_recommendations=str(feedback_data.get("career_recommendations", ""))
-        ))
-        session.status = 'completed'; db.session.commit()
+        if not qa_pairs:
+            return jsonify({"error": "No questions found for this session"}), 400
 
-        user = db.session.get(User, session.user_id)
-        if user:
-            email_body = f"Hi {user.name},\n\nYour interview for {session.job_role} is complete!\n\nTechnical Score: {feedback_data.get('technical_score')}/10\nBehavioral Score: {feedback_data.get('behavioral_score')}/10\n\nStrengths: {feedback_data.get('strengths')}\n\nPlease log in to your dashboard to view the full report."
-            send_email("Your AI Interview Feedback is Ready!", user.email, email_body)
+        # 1. Fetch the candidate's resume context from ChromaDB
+        resume_context = get_resume_context(current_user.user_id)
+        
+        # 2. Pass the resume context to the NEW RAG-aware evaluator
+        feedback_data = evaluate_interview(qa_pairs, session.job_role, resume_context)
+        
+        # 3. Save to Database (Update existing or create new)
+        feedback = Feedback.query.filter_by(session_id=session_id).first()
+        if not feedback:
+            feedback = Feedback(session_id=session_id, user_id=current_user.user_id)
+            db.session.add(feedback)
+            
+        feedback.technical_score = int(feedback_data.get("technical_score", 5))
+        feedback.behavioral_score = int(feedback_data.get("behavioral_score", 5))
+        feedback.strengths = str(feedback_data.get("strengths", ""))
+        feedback.weaknesses = str(feedback_data.get("weaknesses", ""))
+        feedback.career_recommendations = str(feedback_data.get("career_recommendations", ""))
+        
+        session.status = 'completed'
+        db.session.commit()
+
+        # 4. Send Email Notification
+        user = current_user
+        email_body = f"Hi {user.name},\n\nYour interview for {session.job_role} is complete!\n\nTechnical Score: {feedback.technical_score}/10\nBehavioral Score: {feedback.behavioral_score}/10\n\nStrengths: {feedback.strengths}\n\nPlease log in to your dashboard to view the full report."
+        send_email("Your AI Interview Feedback is Ready!", user.email, email_body)
 
         return jsonify({"status": "success", "feedback": feedback_data})
-    except Exception as e: return jsonify({"error": str(e)}), 500
+    except Exception as e:
+        print(f"Evaluation Error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
