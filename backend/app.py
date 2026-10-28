@@ -65,6 +65,9 @@ def send_email(subject, recipient, body):
         print(f"Email Error: {e}")
         return False
 
+# ==============================================================================
+# AUTHENTICATION ROUTES (2-STEP VERIFICATION)
+# ==============================================================================
 @app.route('/api/signup', methods=['POST'])
 def signup():
     data = request.get_json()
@@ -72,7 +75,7 @@ def signup():
     if User.query.filter_by(email=email).first():
         return jsonify({"error": "Email already registered"}), 400
     otp = str(random.randint(100000, 999999))
-    otp_store[email] = {'otp': otp, 'data': data}
+    otp_store[email] = {'otp': otp, 'data': data, 'type': 'signup'}
     send_email("Your Interview App OTP", email, f"Your OTP for signup is: {otp}. It expires in 5 minutes.")
     return jsonify({"status": "success", "message": "OTP sent to email!"})
 
@@ -80,7 +83,7 @@ def signup():
 def verify_signup_otp():
     data = request.get_json()
     email, otp = data.get('email', ''), data.get('otp', '')
-    if email in otp_store and otp_store[email]['otp'] == otp:
+    if email in otp_store and otp_store[email]['otp'] == otp and otp_store[email].get('type') == 'signup':
         user_data = otp_store[email]['data']
         new_user = User(name=user_data['name'], email=email, password_hash=generate_password_hash(user_data['password'], method='pbkdf2:sha256'), role='candidate')
         db.session.add(new_user); db.session.commit()
@@ -91,21 +94,37 @@ def verify_signup_otp():
 @app.route('/api/login', methods=['POST'])
 def login():
     data = request.get_json()
-    email = data.get('email', '')
+    email = data.get('email', '').strip().lower()
+    password = data.get('password', '')
+    
     user = User.query.filter_by(email=email).first()
-    if not user: return jsonify({"error": "User not found"}), 404
+    if not user: 
+        return jsonify({"error": "User not found"}), 404
+        
+    if not check_password_hash(user.password_hash, password):
+        return jsonify({"error": "Invalid password"}), 401
+
     otp = str(random.randint(100000, 999999))
-    otp_store[email] = {'otp': otp, 'password': data.get('password', '')}
-    send_email("Your Login OTP", email, f"Your OTP for login is: {otp}.")
-    return jsonify({"status": "success", "message": "OTP sent to email!"})
+    # SECURE: Tag this OTP specifically for 'login'
+    otp_store[email] = {'otp': otp, 'password': password, 'type': 'login'}
+    
+    email_sent = send_email("Your Login OTP", email, f"Your OTP for login is: {otp}.")
+    if email_sent:
+        return jsonify({"status": "success", "message": "OTP sent to email!"})
+    else:
+        print(f"⚠️ Email server failed. [DEV MODE] Login OTP for {email} is: {otp}")
+        return jsonify({"status": "success", "message": f"Email failed, but [DEV MODE] OTP is: {otp}"})
 
 @app.route('/api/verify-login-otp', methods=['POST'])
 def verify_login_otp():
     data = request.get_json()
-    email, otp = data.get('email', ''), data.get('otp', '')
-    if email in otp_store and otp_store[email]['otp'] == otp:
+    email = data.get('email', '').strip().lower()
+    otp = data.get('otp', '')
+    
+    # SECURE: Check if OTP exists, matches, and is specifically for 'login'
+    if email in otp_store and otp_store[email]['otp'] == otp and otp_store[email].get('type') == 'login':
         user = User.query.filter_by(email=email).first()
-        if check_password_hash(user.password_hash, otp_store[email]['password']):
+        if user:
             token = jwt.encode({
                 'user_id': user.user_id, 
                 'email': user.email, 
@@ -113,9 +132,66 @@ def verify_login_otp():
                 'exp': datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=24)
             }, app.config['SECRET_KEY'], algorithm='HS256')
             del otp_store[email]
-            return jsonify({"status": "success", "token": token, "user": {"user_id": user.user_id, "name": user.name, "email": user.email}})
-    return jsonify({"error": "Invalid OTP or Password"}), 401
+            return jsonify({
+                "status": "success", 
+                "token": token, 
+                "user": {"user_id": user.user_id, "name": user.name, "email": user.email}
+            })
+    return jsonify({"error": "Invalid OTP or session expired"}), 401
 
+# ==============================================================================
+# FORGOT PASSWORD ROUTES
+# ==============================================================================
+@app.route('/api/forgot-password-request', methods=['POST'])
+def forgot_password_request():
+    try:
+        data = request.get_json()
+        email = data.get('email', '').strip().lower()
+        
+        if not email: return jsonify({"error": "Email is required"}), 400
+        user = User.query.filter_by(email=email).first()
+        if not user: return jsonify({"error": "User not found with this email"}), 404
+            
+        otp = str(random.randint(100000, 999999))
+        otp_store[email] = {'otp': otp, 'type': 'forgot'}
+        
+        email_sent = send_email("Your Password Reset OTP", email, f"Your OTP for password reset is: {otp}. It expires in 5 minutes.")
+        if email_sent:
+            return jsonify({"status": "success", "message": "OTP sent to email!"})
+        else:
+            print(f"⚠️ Email server failed. [DEV MODE] Forgot Password OTP for {email} is: {otp}")
+            return jsonify({"status": "success", "message": f"Email failed, but [DEV MODE] OTP is: {otp}"})
+    except Exception as e:
+        print(f"Forgot Password Request Error: {e}")
+        return jsonify({"error": "An internal error occurred"}), 500
+
+@app.route('/api/forgot-password-verify', methods=['POST'])
+def forgot_password_verify():
+    try:
+        data = request.get_json()
+        email = data.get('email', '').strip().lower()
+        otp = data.get('otp', '')
+        new_password = data.get('new_password', '')
+        
+        if not new_password or len(new_password) < 6:
+            return jsonify({"error": "Password must be at least 6 characters"}), 400
+            
+        if email in otp_store and otp_store[email]['otp'] == otp and otp_store[email].get('type') == 'forgot':
+            user = User.query.filter_by(email=email).first()
+            if user:
+                user.password_hash = generate_password_hash(new_password, method='pbkdf2:sha256')
+                db.session.commit()
+                del otp_store[email]
+                return jsonify({"status": "success", "message": "Password updated successfully! You can now login."})
+                
+        return jsonify({"error": "Invalid OTP or session expired"}), 401
+    except Exception as e:
+        print(f"Forgot Password Verify Error: {e}")
+        return jsonify({"error": "An internal error occurred"}), 500
+
+# ==============================================================================
+# RESUME & INTERVIEW ROUTES
+# ==============================================================================
 @app.route('/api/upload-resume', methods=['POST'])
 @token_required
 def upload_resume(current_user):
@@ -139,75 +215,17 @@ def clear_resume(current_user):
 @token_required
 def get_active_interview(current_user):
     active_session = InterviewSession.query.filter_by(user_id=current_user.user_id, status='in_progress').order_by(InterviewSession.started_at.desc()).first()
-    if not active_session:
-        return jsonify({"status": "success", "active": False})
+    if not active_session: return jsonify({"status": "success", "active": False})
     
     questions = Question.query.filter_by(session_id=active_session.session_id).order_by(Question.question_id).all()
-    qa_pairs = []
-    for q in questions:
-        response = Response.query.filter_by(question_id=q.question_id).first()
-        qa_pairs.append({
-            "question": q.question_text,
-            "answer": response.answer_text if response else ""
-        })
+    qa_pairs = [{"question": q.question_text, "answer": Response.query.filter_by(question_id=q.question_id).first().answer_text if Response.query.filter_by(question_id=q.question_id).first() else ""} for q in questions]
     
     q_count = len(questions)
     current_round = 1
     if q_count >= 5: current_round = 2
     if q_count >= 10: current_round = 3
     
-    return jsonify({
-        "status": "success",
-        "active": True,
-        "session_id": active_session.session_id,
-        "job_role": active_session.job_role,
-        "current_round": current_round,
-        "qa_pairs": qa_pairs
-    })
-
-@app.route('/api/interview/session/<int:session_id>', methods=['GET'])
-@token_required
-def get_specific_session(current_user, session_id):
-    session = InterviewSession.query.filter_by(session_id=session_id, user_id=current_user.user_id).first()
-    if not session:
-        return jsonify({"error": "Session not found"}), 404
-        
-    questions = Question.query.filter_by(session_id=session_id).order_by(Question.question_id).all()
-    qa_pairs = []
-    for q in questions:
-        response = Response.query.filter_by(question_id=q.question_id).first()
-        qa_pairs.append({
-            "question": q.question_text,
-            "answer": response.answer_text if response else ""
-        })
-    
-    q_count = len(questions)
-    current_round = 1
-    if q_count >= 5: current_round = 2
-    if q_count >= 10: current_round = 3
-    
-    return jsonify({
-        "status": "success",
-        "session_id": session.session_id,
-        "job_role": session.job_role,
-        "current_round": current_round,
-        "qa_pairs": qa_pairs
-    })
-
-@app.route('/api/interview/<int:session_id>', methods=['DELETE'])
-@token_required
-def delete_interview(current_user, session_id):
-    session = InterviewSession.query.filter_by(session_id=session_id, user_id=current_user.user_id).first()
-    if not session:
-        return jsonify({"error": "Session not found"}), 404
-    
-    Response.query.filter(Response.question_id.in_(db.session.query(Question.question_id).filter_by(session_id=session_id))).delete(synchronize_session='fetch')
-    Question.query.filter_by(session_id=session_id).delete()
-    Feedback.query.filter_by(session_id=session_id).delete()
-    
-    db.session.delete(session)
-    db.session.commit()
-    return jsonify({"status": "success", "message": "Interview deleted successfully!"})
+    return jsonify({"status": "success", "active": True, "session_id": active_session.session_id, "job_role": active_session.job_role, "current_round": current_round, "qa_pairs": qa_pairs})
 
 @app.route('/api/interview', methods=['POST'])
 @token_required
@@ -220,12 +238,7 @@ def interview_chat(current_user):
     if active_session and Question.query.filter_by(session_id=active_session.session_id).count() >= 15:
         active_session.status = 'completed'; db.session.commit(); active_session = None
     if not active_session:
-        active_session = InterviewSession(
-            user_id=current_user.user_id, 
-            job_role=job_role, 
-            status='in_progress',
-            started_at=datetime.datetime.now(datetime.timezone.utc)
-        )
+        active_session = InterviewSession(user_id=current_user.user_id, job_role=job_role, status='in_progress', started_at=datetime.datetime.now(datetime.timezone.utc))
         db.session.add(active_session); db.session.commit()
 
     if Question.query.filter_by(session_id=active_session.session_id).count() >= 15:
@@ -246,55 +259,30 @@ def get_interviews():
     result = []
     for session in sessions:
         feedback = Feedback.query.filter_by(session_id=session.session_id).first()
-        
-        # --- FOOLPROOF IST CONVERSION ---
         raw_time = session.started_at
         if raw_time:
-            if raw_time.tzinfo is None:
-                raw_time = raw_time.replace(tzinfo=datetime.timezone.utc)
-            ist_time = raw_time.astimezone(IST)
-            date_str = ist_time.strftime("%d %b %Y, %I:%M %p")
-        else:
-            date_str = "Unknown Date"
+            if raw_time.tzinfo is None: raw_time = raw_time.replace(tzinfo=datetime.timezone.utc)
+            date_str = raw_time.astimezone(IST).strftime("%d %b %Y, %I:%M %p")
+        else: date_str = "Unknown Date"
             
-        result.append({
-            "session_id": session.session_id, 
-            "job_role": session.job_role, 
-            "status": session.status,
-            "started_at": date_str,
-            "technical_score": feedback.technical_score if feedback else None,
-            "behavioral_score": feedback.behavioral_score if feedback else None
-        })
+        result.append({"session_id": session.session_id, "job_role": session.job_role, "status": session.status, "started_at": date_str, "technical_score": feedback.technical_score if feedback else None, "behavioral_score": feedback.behavioral_score if feedback else None})
     result.reverse()
     return jsonify({"status": "success", "data": result})
 
-# ==============================================================================
-# UPDATED: RAG-Aware Evaluation Route
-# ==============================================================================
 @app.route('/api/evaluate/<int:session_id>', methods=['POST'])
 @token_required
 def evaluate_session(current_user, session_id):
     try:
         session = InterviewSession.query.get(session_id)
-        if not session: 
-            return jsonify({"error": "Session not found"}), 404
+        if not session: return jsonify({"error": "Session not found"}), 404
             
         questions = Question.query.filter_by(session_id=session_id).all()
-        qa_pairs = [{
-            "question": q.question_text, 
-            "answer": Response.query.filter_by(question_id=q.question_id).first().answer_text if Response.query.filter_by(question_id=q.question_id).first() else "No answer"
-        } for q in questions]
-        
-        if not qa_pairs:
-            return jsonify({"error": "No questions found for this session"}), 400
+        qa_pairs = [{"question": q.question_text, "answer": Response.query.filter_by(question_id=q.question_id).first().answer_text if Response.query.filter_by(question_id=q.question_id).first() else "No answer"} for q in questions]
+        if not qa_pairs: return jsonify({"error": "No questions found"}), 400
 
-        # 1. Fetch the candidate's resume context from ChromaDB
         resume_context = get_resume_context(current_user.user_id)
-        
-        # 2. Pass the resume context to the NEW RAG-aware evaluator
         feedback_data = evaluate_interview(qa_pairs, session.job_role, resume_context)
         
-        # 3. Save to Database (Update existing or create new)
         feedback = Feedback.query.filter_by(session_id=session_id).first()
         if not feedback:
             feedback = Feedback(session_id=session_id, user_id=current_user.user_id)
@@ -309,9 +297,8 @@ def evaluate_session(current_user, session_id):
         session.status = 'completed'
         db.session.commit()
 
-        # 4. Send Email Notification
         user = current_user
-        email_body = f"Hi {user.name},\n\nYour interview for {session.job_role} is complete!\n\nTechnical Score: {feedback.technical_score}/10\nBehavioral Score: {feedback.behavioral_score}/10\n\nStrengths: {feedback.strengths}\n\nPlease log in to your dashboard to view the full report."
+        email_body = f"Hi {user.name},\n\nYour interview for {session.job_role} is complete!\n\nTechnical Score: {feedback.technical_score}/10\nBehavioral Score: {feedback.behavioral_score}/10\n\nStrengths: {feedback.strengths}\n\nPlease log in to view your full report."
         send_email("Your AI Interview Feedback is Ready!", user.email, email_body)
 
         return jsonify({"status": "success", "feedback": feedback_data})

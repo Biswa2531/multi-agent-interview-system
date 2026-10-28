@@ -4,6 +4,7 @@ import Navbar from './components/Navbar'
 
 import Login from './pages/Login'
 import Signup from './pages/Signup'
+import VerifyOTP from './pages/VerifyOTP' // <-- NEW: Imported for 2-Step Verification
 import Dashboard from './pages/Dashboard'
 import Interview from './pages/Interview'
 import Feedback from './pages/Feedback'
@@ -30,7 +31,12 @@ function App() {
       
       <Routes>
         <Route path="/" element={<Login />} />
+        <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
+        
+        {/* NEW: Route for the 2-Step OTP Verification Page */}
+        <Route path="/verify-otp" element={<VerifyOTP />} />
+        
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/interview" element={<Interview />} />
         <Route path="/feedback" element={<Feedback />} />
