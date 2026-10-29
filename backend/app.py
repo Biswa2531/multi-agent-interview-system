@@ -41,6 +41,9 @@ if not os.path.exists(UPLOAD_FOLDER):
 
 otp_store = {} 
 
+# ==============================================================================
+# DECORATORS & HELPERS
+# ==============================================================================
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -55,6 +58,15 @@ def token_required(f):
         return f(current_user, *args, **kwargs)
     return decorated
 
+def admin_required(f):
+    @wraps(f)
+    @token_required
+    def decorated(current_user, *args, **kwargs):
+        if current_user.role != 'admin':
+            return jsonify({"error": "Admin access required"}), 403
+        return f(current_user, *args, **kwargs)
+    return decorated
+
 def send_email(subject, recipient, body):
     try:
         msg = Message(subject, sender=app.config['MAIL_USERNAME'], recipients=[recipient])
@@ -66,7 +78,7 @@ def send_email(subject, recipient, body):
         return False
 
 # ==============================================================================
-# AUTHENTICATION ROUTES (2-STEP VERIFICATION)
+# AUTHENTICATION ROUTES
 # ==============================================================================
 @app.route('/api/signup', methods=['POST'])
 def signup():
@@ -96,98 +108,62 @@ def login():
     data = request.get_json()
     email = data.get('email', '').strip().lower()
     password = data.get('password', '')
-    
     user = User.query.filter_by(email=email).first()
-    if not user: 
-        return jsonify({"error": "User not found"}), 404
-        
-    if not check_password_hash(user.password_hash, password):
-        return jsonify({"error": "Invalid password"}), 401
+    if not user: return jsonify({"error": "User not found"}), 404
+    if not check_password_hash(user.password_hash, password): return jsonify({"error": "Invalid password"}), 401
 
     otp = str(random.randint(100000, 999999))
-    # SECURE: Tag this OTP specifically for 'login'
     otp_store[email] = {'otp': otp, 'password': password, 'type': 'login'}
-    
     email_sent = send_email("Your Login OTP", email, f"Your OTP for login is: {otp}.")
-    if email_sent:
-        return jsonify({"status": "success", "message": "OTP sent to email!"})
+    if email_sent: return jsonify({"status": "success", "message": "OTP sent to email!"})
     else:
-        print(f"⚠️ Email server failed. [DEV MODE] Login OTP for {email} is: {otp}")
+        print(f"️ Email server failed. [DEV MODE] Login OTP for {email} is: {otp}")
         return jsonify({"status": "success", "message": f"Email failed, but [DEV MODE] OTP is: {otp}"})
 
 @app.route('/api/verify-login-otp', methods=['POST'])
 def verify_login_otp():
     data = request.get_json()
-    email = data.get('email', '').strip().lower()
-    otp = data.get('otp', '')
-    
-    # SECURE: Check if OTP exists, matches, and is specifically for 'login'
+    email, otp = data.get('email', '').strip().lower(), data.get('otp', '')
     if email in otp_store and otp_store[email]['otp'] == otp and otp_store[email].get('type') == 'login':
         user = User.query.filter_by(email=email).first()
         if user:
-            token = jwt.encode({
-                'user_id': user.user_id, 
-                'email': user.email, 
-                'role': user.role, 
-                'exp': datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=24)
-            }, app.config['SECRET_KEY'], algorithm='HS256')
+            token = jwt.encode({'user_id': user.user_id, 'email': user.email, 'role': user.role, 'exp': datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=24)}, app.config['SECRET_KEY'], algorithm='HS256')
             del otp_store[email]
-            return jsonify({
-                "status": "success", 
-                "token": token, 
-                "user": {"user_id": user.user_id, "name": user.name, "email": user.email}
-            })
+            # --- FIXED: Added "role": user.role to the response ---
+            return jsonify({"status": "success", "token": token, "user": {"user_id": user.user_id, "name": user.name, "email": user.email, "role": user.role}})
     return jsonify({"error": "Invalid OTP or session expired"}), 401
 
-# ==============================================================================
-# FORGOT PASSWORD ROUTES
-# ==============================================================================
 @app.route('/api/forgot-password-request', methods=['POST'])
 def forgot_password_request():
     try:
         data = request.get_json()
         email = data.get('email', '').strip().lower()
-        
         if not email: return jsonify({"error": "Email is required"}), 400
         user = User.query.filter_by(email=email).first()
         if not user: return jsonify({"error": "User not found with this email"}), 404
-            
         otp = str(random.randint(100000, 999999))
         otp_store[email] = {'otp': otp, 'type': 'forgot'}
-        
-        email_sent = send_email("Your Password Reset OTP", email, f"Your OTP for password reset is: {otp}. It expires in 5 minutes.")
-        if email_sent:
-            return jsonify({"status": "success", "message": "OTP sent to email!"})
+        email_sent = send_email("Your Password Reset OTP", email, f"Your OTP for password reset is: {otp}.")
+        if email_sent: return jsonify({"status": "success", "message": "OTP sent to email!"})
         else:
-            print(f"⚠️ Email server failed. [DEV MODE] Forgot Password OTP for {email} is: {otp}")
+            print(f"️ Email server failed. [DEV MODE] Forgot Password OTP for {email} is: {otp}")
             return jsonify({"status": "success", "message": f"Email failed, but [DEV MODE] OTP is: {otp}"})
-    except Exception as e:
-        print(f"Forgot Password Request Error: {e}")
-        return jsonify({"error": "An internal error occurred"}), 500
+    except Exception as e: return jsonify({"error": str(e)}), 500
 
 @app.route('/api/forgot-password-verify', methods=['POST'])
 def forgot_password_verify():
     try:
         data = request.get_json()
-        email = data.get('email', '').strip().lower()
-        otp = data.get('otp', '')
-        new_password = data.get('new_password', '')
-        
-        if not new_password or len(new_password) < 6:
-            return jsonify({"error": "Password must be at least 6 characters"}), 400
-            
+        email, otp, new_password = data.get('email', '').strip().lower(), data.get('otp', ''), data.get('new_password', '')
+        if not new_password or len(new_password) < 6: return jsonify({"error": "Password must be at least 6 characters"}), 400
         if email in otp_store and otp_store[email]['otp'] == otp and otp_store[email].get('type') == 'forgot':
             user = User.query.filter_by(email=email).first()
             if user:
                 user.password_hash = generate_password_hash(new_password, method='pbkdf2:sha256')
-                db.session.commit()
-                del otp_store[email]
+                db.session.commit(); del otp_store[email]
                 return jsonify({"status": "success", "message": "Password updated successfully! You can now login."})
-                
         return jsonify({"error": "Invalid OTP or session expired"}), 401
-    except Exception as e:
-        print(f"Forgot Password Verify Error: {e}")
-        return jsonify({"error": "An internal error occurred"}), 500
+    except Exception as e: return jsonify({"error": str(e)}), 500
 
 # ==============================================================================
 # RESUME & INTERVIEW ROUTES
@@ -210,22 +186,6 @@ def clear_resume(current_user):
         collection.delete(where={"user_id": str(current_user.user_id)})
         return jsonify({"status": "success", "message": "Resume cleared!"})
     except Exception as e: return jsonify({"error": str(e)}), 500
-
-@app.route('/api/interview/active', methods=['GET'])
-@token_required
-def get_active_interview(current_user):
-    active_session = InterviewSession.query.filter_by(user_id=current_user.user_id, status='in_progress').order_by(InterviewSession.started_at.desc()).first()
-    if not active_session: return jsonify({"status": "success", "active": False})
-    
-    questions = Question.query.filter_by(session_id=active_session.session_id).order_by(Question.question_id).all()
-    qa_pairs = [{"question": q.question_text, "answer": Response.query.filter_by(question_id=q.question_id).first().answer_text if Response.query.filter_by(question_id=q.question_id).first() else ""} for q in questions]
-    
-    q_count = len(questions)
-    current_round = 1
-    if q_count >= 5: current_round = 2
-    if q_count >= 10: current_round = 3
-    
-    return jsonify({"status": "success", "active": True, "session_id": active_session.session_id, "job_role": active_session.job_role, "current_round": current_round, "qa_pairs": qa_pairs})
 
 @app.route('/api/interview', methods=['POST'])
 @token_required
@@ -254,8 +214,9 @@ def interview_chat(current_user):
     return jsonify({"status": "success", "response": ai_response, "is_complete": False})
 
 @app.route('/api/interviews', methods=['GET'])
-def get_interviews():
-    sessions = InterviewSession.query.all()
+@token_required
+def get_interviews(current_user):
+    sessions = InterviewSession.query.filter_by(user_id=current_user.user_id).all()
     result = []
     for session in sessions:
         feedback = Feedback.query.filter_by(session_id=session.session_id).first()
@@ -264,10 +225,35 @@ def get_interviews():
             if raw_time.tzinfo is None: raw_time = raw_time.replace(tzinfo=datetime.timezone.utc)
             date_str = raw_time.astimezone(IST).strftime("%d %b %Y, %I:%M %p")
         else: date_str = "Unknown Date"
-            
         result.append({"session_id": session.session_id, "job_role": session.job_role, "status": session.status, "started_at": date_str, "technical_score": feedback.technical_score if feedback else None, "behavioral_score": feedback.behavioral_score if feedback else None})
     result.reverse()
     return jsonify({"status": "success", "data": result})
+
+@app.route('/api/interview/<int:session_id>', methods=['DELETE'])
+@token_required
+def delete_interview(current_user, session_id):
+    session = InterviewSession.query.filter_by(session_id=session_id, user_id=current_user.user_id).first()
+    if not session: return jsonify({"error": "Session not found"}), 404
+    Response.query.filter(Response.question_id.in_(db.session.query(Question.question_id).filter_by(session_id=session_id))).delete(synchronize_session='fetch')
+    Question.query.filter_by(session_id=session_id).delete()
+    Feedback.query.filter_by(session_id=session_id).delete()
+    db.session.delete(session); db.session.commit()
+    return jsonify({"status": "success", "message": "Interview deleted successfully!"})
+
+@app.route('/api/user/stats', methods=['GET'])
+@token_required
+def get_user_stats(current_user):
+    try:
+        sessions = InterviewSession.query.filter_by(user_id=current_user.user_id, status='completed').order_by(InterviewSession.started_at.asc()).all()
+        interview_history = []
+        total_tech = 0; total_behav = 0; count = 0
+        for session in sessions:
+            feedback = Feedback.query.filter_by(session_id=session.session_id).first()
+            if feedback:
+                total_tech += feedback.technical_score; total_behav += feedback.behavioral_score; count += 1
+                interview_history.append({"interview_number": count, "date": session.started_at.strftime("%d %b"), "job_role": session.job_role, "technical_score": feedback.technical_score, "behavioral_score": feedback.behavioral_score, "average_score": round((feedback.technical_score + feedback.behavioral_score) / 2, 1)})
+        return jsonify({"status": "success", "total_interviews": count, "average_technical_score": round(total_tech / count, 1) if count > 0 else 0, "average_behavioral_score": round(total_behav / count, 1) if count > 0 else 0, "interview_history": interview_history})
+    except Exception as e: return jsonify({"error": str(e)}), 500
 
 @app.route('/api/evaluate/<int:session_id>', methods=['POST'])
 @token_required
@@ -275,7 +261,6 @@ def evaluate_session(current_user, session_id):
     try:
         session = InterviewSession.query.get(session_id)
         if not session: return jsonify({"error": "Session not found"}), 404
-            
         questions = Question.query.filter_by(session_id=session_id).all()
         qa_pairs = [{"question": q.question_text, "answer": Response.query.filter_by(question_id=q.question_id).first().answer_text if Response.query.filter_by(question_id=q.question_id).first() else "No answer"} for q in questions]
         if not qa_pairs: return jsonify({"error": "No questions found"}), 400
@@ -293,18 +278,59 @@ def evaluate_session(current_user, session_id):
         feedback.strengths = str(feedback_data.get("strengths", ""))
         feedback.weaknesses = str(feedback_data.get("weaknesses", ""))
         feedback.career_recommendations = str(feedback_data.get("career_recommendations", ""))
-        
-        session.status = 'completed'
-        db.session.commit()
+        session.status = 'completed'; db.session.commit()
 
         user = current_user
-        email_body = f"Hi {user.name},\n\nYour interview for {session.job_role} is complete!\n\nTechnical Score: {feedback.technical_score}/10\nBehavioral Score: {feedback.behavioral_score}/10\n\nStrengths: {feedback.strengths}\n\nPlease log in to view your full report."
-        send_email("Your AI Interview Feedback is Ready!", user.email, email_body)
-
+        send_email("Your AI Interview Feedback is Ready!", user.email, f"Hi {user.name},\n\nYour interview for {session.job_role} is complete!\n\nTechnical Score: {feedback.technical_score}/10\nBehavioral Score: {feedback.behavioral_score}/10\n\nStrengths: {feedback.strengths}\n\nPlease log in to view your full report.")
         return jsonify({"status": "success", "feedback": feedback_data})
-    except Exception as e:
-        print(f"Evaluation Error: {e}")
-        return jsonify({"error": str(e)}), 500
+    except Exception as e: return jsonify({"error": str(e)}), 500
+
+# ==============================================================================
+# ADMIN ROUTES (Protected)
+# ==============================================================================
+@app.route('/api/admin/dashboard', methods=['GET'])
+@admin_required
+def admin_dashboard(current_user):
+    return jsonify({"status": "success", "message": f"Welcome to the Admin Dashboard, {current_user.name}!", "data": {"total_users": User.query.count(), "total_interviews": InterviewSession.query.count()}})
+
+@app.route('/api/admin/users', methods=['GET'])
+@admin_required
+def get_all_users(current_user):
+    users = User.query.all()
+    user_list = [{"user_id": u.user_id, "name": u.name, "email": u.email, "role": u.role, "interviews_count": InterviewSession.query.filter_by(user_id=u.user_id).count()} for u in users]
+    return jsonify({"status": "success", "data": user_list})
+
+@app.route('/api/admin/users/<int:user_id>', methods=['DELETE'])
+@admin_required
+def delete_user(current_user, user_id):
+    user = User.query.get(user_id)
+    if not user: return jsonify({"error": "User not found"}), 404
+    InterviewSession.query.filter_by(user_id=user_id).delete()
+    db.session.delete(user)
+    db.session.commit()
+    return jsonify({"status": "success", "message": "User deleted successfully"})
+
+@app.route('/api/admin/users/<int:user_id>/reset-password', methods=['POST'])
+@admin_required
+def reset_user_password(current_user, user_id):
+    user = User.query.get(user_id)
+    if not user: return jsonify({"error": "User not found"}), 404
+    temp_password = "TempPass123!"
+    user.password_hash = generate_password_hash(temp_password, method='pbkdf2:sha256')
+    db.session.commit()
+    send_email("Password Reset by Admin", user.email, f"Hello {user.name},\n\nYour password has been reset by the system administrator.\nYour temporary password is: {temp_password}\n\nPlease log in and change it immediately.")
+    return jsonify({"status": "success", "message": f"Password reset successfully. Temp password: {temp_password}"})
+
+@app.route('/api/dev/promote-to-admin', methods=['POST'])
+def promote_to_admin():
+    data = request.get_json()
+    email = data.get('email', '').strip().lower()
+    user = User.query.filter_by(email=email).first()
+    if user:
+        user.role = 'admin'
+        db.session.commit()
+        return jsonify({"status": "success", "message": f"{email} is now an admin!"})
+    return jsonify({"error": "User not found"}), 404
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

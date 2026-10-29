@@ -1,158 +1,158 @@
 import { useState, useEffect } from 'react'
-import axios from 'axios'
 import { useNavigate } from 'react-router-dom'
+import axios from 'axios'
 import toast from 'react-hot-toast'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import StarryBackground from '../components/StarryBackground'
 
 function Dashboard() {
   const navigate = useNavigate()
   const [interviews, setInterviews] = useState([])
-  const [userName, setUserName] = useState('Candidate')
+  const [stats, setStats] = useState(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const user = JSON.parse(localStorage.getItem('user') || '{}')
 
   useEffect(() => {
     const token = localStorage.getItem('token')
-    if (!token) { navigate('/') }
-    
-    const userStr = localStorage.getItem('user')
-    if (userStr) {
-      try { setUserName(JSON.parse(userStr).name || 'Candidate') } catch(e) {}
-    }
-    fetchInterviews(token)
-  }, [navigate])
+    if (!token) { navigate('/login'); return }
+    if (user.role === 'admin') { navigate('/admin/dashboard'); return }
+    fetchInterviews()
+    fetchUserStats()
+  }, [])
 
-  const fetchInterviews = async (token) => {
+  const fetchInterviews = async () => {
     try {
-      if (!token) token = localStorage.getItem('token')
-      const response = await axios.get('http://127.0.0.1:5000/api/interviews', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
-      setInterviews(response.data.data)
-    } catch (error) {
-      console.error("Failed to fetch interviews:", error)
-    }
+      const token = localStorage.getItem('token')
+      const res = await axios.get('http://127.0.0.1:5000/api/interviews', { headers: { 'Authorization': `Bearer ${token}` } })
+      setInterviews(res.data.data || [])
+    } catch (err) { toast.error('Failed to load interviews') }
   }
 
-  const handleResume = (session) => {
-    navigate('/interview', { state: { sessionId: session.session_id } })
-  }
-
-  const handleDelete = async (sessionId) => {
-    if (!window.confirm("Are you sure you want to delete this interview record?")) return;
-    
-    const token = localStorage.getItem('token')
+  const fetchUserStats = async () => {
     try {
-      await axios.delete(`http://127.0.0.1:5000/api/interview/${sessionId}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
-      toast.success("Interview deleted successfully!")
-      fetchInterviews(token)
-    } catch (error) {
-      toast.error("Failed to delete interview.")
-    }
+      const token = localStorage.getItem('token')
+      const res = await axios.get('http://127.0.0.1:5000/api/user/stats', { headers: { 'Authorization': `Bearer ${token}` } })
+      setStats(res.data)
+    } catch (err) { console.error('Stats error:', err) } 
+    finally { setIsLoading(false) }
   }
+
+  const handleDeleteInterview = async (sessionId) => {
+    if (!window.confirm('Are you sure you want to delete this interview?')) return
+    try {
+      const token = localStorage.getItem('token')
+      await axios.delete(`http://127.0.0.1:5000/api/interview/${sessionId}`, { headers: { 'Authorization': `Bearer ${token}` } })
+      toast.success('Interview deleted successfully')
+      fetchInterviews(); fetchUserStats()
+    } catch (err) { toast.error('Failed to delete interview') }
+  }
+
+  const getStatusBadge = (status) => {
+    const badges = {
+      'completed': 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800',
+      'in_progress': 'bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-400 border-cyan-200 dark:border-cyan-800'
+    }
+    return badges[status] || badges['in_progress']
+  }
+
+  if (isLoading) return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-900">
+      <div className="text-cyan-500 text-xl animate-pulse">Loading dashboard...</div>
+    </div>
+  )
 
   return (
-    <div className="min-h-screen relative overflow-hidden bg-gradient-to-br from-gray-100 to-gray-200 dark:from-slate-900 dark:to-slate-800 transition-colors duration-300">
-      
-      {/* MOVING FLOATING BACKGROUND ELEMENTS */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
-        <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-cyan-500/30 dark:bg-cyan-500/20 rounded-full blur-3xl animate-bg-1"></div>
-        <div className="absolute bottom-[-10%] right-[-10%] w-[600px] h-[600px] bg-blue-500/30 dark:bg-blue-500/20 rounded-full blur-3xl animate-bg-2"></div>
-        <div className="absolute top-[20%] right-[10%] w-[400px] h-[400px] bg-purple-500/20 dark:bg-purple-500/10 rounded-full blur-3xl animate-bg-3"></div>
-      </div>
-
-      {/* STARRY NIGHT GLOWING EFFECT */}
+    <div className="min-h-screen relative overflow-hidden bg-gray-50 dark:bg-slate-900 transition-colors duration-300">
       <StarryBackground />
+      {/* FIXED: Added pt-24 to push content below Navbar */}
+      <div className="relative z-10 container mx-auto px-6 py-8 pt-24">
+        
+        <div className="mb-8">
+          <h1 className="text-4xl font-bold text-slate-800 dark:text-white mb-2">Welcome back, {user.name || 'Candidate'}!</h1>
+          <p className="text-slate-600 dark:text-slate-400">Track your interview progress and performance analytics</p>
+        </div>
 
-      {/* Main Content (z-10 to sit above background) */}
-      <div className="relative z-10 pt-24 pb-12 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto">
-          
-          {/* Header Section */}
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
-            <div>
-              <h1 className="text-3xl font-bold text-slate-900 dark:text-white">
-                Welcome back, <span className="bg-gradient-to-r from-cyan-600 to-blue-600 dark:from-cyan-400 dark:to-blue-400 bg-clip-text text-transparent">{userName}</span>!
-              </h1>
-              <p className="text-slate-600 dark:text-slate-400 mt-1">Ready to ace your next technical evaluation?</p>
+        {stats && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div className="glass-card rounded-2xl p-6 border border-white/20 dark:border-slate-700/50">
+              <div className="text-sm text-slate-600 dark:text-slate-400 mb-2">Total Interviews</div>
+              <div className="text-4xl font-bold text-cyan-600 dark:text-cyan-400">{stats.total_interviews}</div>
+            </div>
+            <div className="glass-card rounded-2xl p-6 border border-white/20 dark:border-slate-700/50">
+              <div className="text-sm text-slate-600 dark:text-slate-400 mb-2">Avg Technical Score</div>
+              <div className="text-4xl font-bold text-purple-600 dark:text-purple-400">{stats.average_technical_score}/10</div>
+            </div>
+            <div className="glass-card rounded-2xl p-6 border border-white/20 dark:border-slate-700/50">
+              <div className="text-sm text-slate-600 dark:text-slate-400 mb-2">Avg Behavioral Score</div>
+              <div className="text-4xl font-bold text-emerald-600 dark:text-emerald-400">{stats.average_behavioral_score}/10</div>
             </div>
           </div>
+        )}
 
-          {/* Start New Interview CTA */}
-          <div className="glass-card rounded-2xl p-8 mb-10 flex flex-col md:flex-row items-center justify-between gap-6 border-l-4 border-l-cyan-500">
-            <div>
-              <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Start a New Interview Session</h2>
-              <p className="text-slate-600 dark:text-slate-400 text-sm">Initialize a 3-round AI evaluation with real-time RAG context and proctoring.</p>
+        {stats && stats.interview_history && stats.interview_history.length > 0 ? (
+          <div className="glass-card rounded-2xl p-6 mb-8 border border-white/20 dark:border-slate-700/50">
+            <h2 className="text-2xl font-bold text-slate-800 dark:text-white mb-6">📈 Performance Trends</h2>
+            <div className="h-80">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={stats.interview_history} margin={{ top: 20, right: 30, left: 20, bottom: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.2)" />
+                  <XAxis dataKey="interview_number" stroke="rgb(148, 163, 184)" label={{ value: 'Interview #', position: 'insideBottom', offset: -5, fill: 'rgb(148, 163, 184)' }} />
+                  <YAxis stroke="rgb(148, 163, 184)" domain={[0, 10]} label={{ value: 'Score (out of 10)', angle: -90, position: 'insideLeft', fill: 'rgb(148, 163, 184)' }} />
+                  <Tooltip contentStyle={{ backgroundColor: 'rgba(30, 41, 59, 0.9)', border: '1px solid rgba(148, 163, 184, 0.3)', borderRadius: '8px', color: '#fff' }} />
+                  <Legend />
+                  <Line type="monotone" dataKey="technical_score" stroke="#06b6d4" strokeWidth={3} name="Technical Score" dot={{ fill: '#06b6d4', strokeWidth: 2, r: 6 }} activeDot={{ r: 8 }} />
+                  <Line type="monotone" dataKey="behavioral_score" stroke="#a855f7" strokeWidth={3} name="Behavioral Score" dot={{ fill: '#a855f7', strokeWidth: 2, r: 6 }} activeDot={{ r: 8 }} />
+                  <Line type="monotone" dataKey="average_score" stroke="#10b981" strokeWidth={3} strokeDasharray="5 5" name="Average Score" dot={{ fill: '#10b981', strokeWidth: 2, r: 6 }} />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
-            <button 
-              onClick={() => navigate('/interview')} 
-              className="glass-button px-8 py-3 text-base whitespace-nowrap shadow-lg shadow-cyan-500/20"
-            >
-              ➕ Start New Interview
-            </button>
           </div>
+        ) : (
+          <div className="glass-card rounded-2xl p-12 mb-8 border border-white/20 dark:border-slate-700/50 text-center">
+            <h2 className="text-2xl font-bold text-slate-800 dark:text-white mb-2">No Performance Data Yet</h2>
+            <p className="text-slate-600 dark:text-slate-400">Complete your first interview to start tracking your progress!</p>
+          </div>
+        )}
 
-          {/* Interview History Section */}
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Your Interview History</h2>
-            <span className="text-sm font-mono text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700">
-              {interviews.length} RECORDS FOUND
-            </span>
-          </div>
+        <div className="glass-card rounded-2xl p-6 border border-white/20 dark:border-slate-700/50">
+          <h2 className="text-2xl font-bold text-slate-800 dark:text-white mb-6">📋 Interview History</h2>
           
           {interviews.length === 0 ? (
-            <div className="glass-card rounded-2xl p-12 text-center">
-              <p className="text-slate-500 dark:text-slate-400 text-lg">You haven't taken any interviews yet.</p>
+            <div className="text-center py-12">
+              <p className="text-slate-600 dark:text-slate-400 mb-4">No interviews yet. Start your first interview!</p>
+              <button onClick={() => navigate('/interview')} className="bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-bold px-6 py-3 rounded-lg hover:from-cyan-400 hover:to-blue-500 transition-all">Start Interview</button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {interviews.map((interview) => (
-                <div key={interview.session_id} className="glass-card rounded-2xl p-6 relative group hover:scale-[1.02] transition-transform duration-300">
-                  
-                  <button 
-                    onClick={() => handleDelete(interview.session_id)}
-                    className="absolute top-4 right-4 p-2 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                    title="Delete Interview"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                  </button>
-
-                  <div className="mb-4">
-                    <h3 className="text-lg font-bold text-slate-900 dark:text-white pr-8">{interview.job_role}</h3>
-                    <p className="text-xs font-mono text-slate-500 dark:text-slate-400 mt-1">📅 {interview.started_at}</p>
-                  </div>
-
-                  <div className="flex justify-between items-center mb-6 pt-4 border-t border-slate-200 dark:border-slate-700">
-                    <div className="text-center">
-                      <p className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">Technical</p>
-                      <p className={`text-xl font-bold ${interview.technical_score >= 7 ? 'text-emerald-500' : 'text-red-500'}`}>
-                        {interview.technical_score !== null ? `${interview.technical_score}/10` : 'N/A'}
-                      </p>
-                    </div>
-                    <div className="text-center">
-                      <p className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">Behavioral</p>
-                      <p className={`text-xl font-bold ${interview.behavioral_score >= 7 ? 'text-emerald-500' : 'text-red-500'}`}>
-                        {interview.behavioral_score !== null ? `${interview.behavioral_score}/10` : 'N/A'}
-                      </p>
-                    </div>
-                  </div>
-                  
-                  <div className="text-center">
-                    {interview.status === 'in_progress' ? (
-                      <button 
-                        onClick={() => handleResume(interview)}
-                        className="w-full py-2.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm transition-colors shadow-lg shadow-amber-500/20"
-                      >
-                        ▶️ Resume Interview
-                      </button>
-                    ) : (
-                      <span className="inline-block px-4 py-1.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 text-xs font-bold border border-emerald-200 dark:border-emerald-800">
-                        COMPLETED
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-slate-200 dark:border-slate-700">
+                    <th className="text-left py-3 px-4 text-sm font-semibold text-slate-700 dark:text-slate-300">Job Role</th>
+                    <th className="text-left py-3 px-4 text-sm font-semibold text-slate-700 dark:text-slate-300">Date</th>
+                    <th className="text-left py-3 px-4 text-sm font-semibold text-slate-700 dark:text-slate-300">Status</th>
+                    <th className="text-left py-3 px-4 text-sm font-semibold text-slate-700 dark:text-slate-300">Tech Score</th>
+                    <th className="text-left py-3 px-4 text-sm font-semibold text-slate-700 dark:text-slate-300">Behav Score</th>
+                    <th className="text-left py-3 px-4 text-sm font-semibold text-slate-700 dark:text-slate-300">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {interviews.map((interview) => (
+                    <tr key={interview.session_id} className="border-b border-slate-200 dark:border-slate-700/50 hover:bg-white/5 dark:hover:bg-slate-800/50 transition-colors">
+                      <td className="py-3 px-4 text-sm text-slate-800 dark:text-slate-200">{interview.job_role}</td>
+                      <td className="py-3 px-4 text-sm text-slate-600 dark:text-slate-400">{interview.started_at}</td>
+                      <td className="py-3 px-4"><span className={`text-xs font-bold px-3 py-1 rounded-full border ${getStatusBadge(interview.status)}`}>{interview.status.toUpperCase()}</span></td>
+                      <td className="py-3 px-4 text-sm">{interview.technical_score ? <span className="text-purple-600 dark:text-purple-400 font-bold">{interview.technical_score}/10</span> : <span className="text-slate-400">-</span>}</td>
+                      <td className="py-3 px-4 text-sm">{interview.behavioral_score ? <span className="text-emerald-600 dark:text-emerald-400 font-bold">{interview.behavioral_score}/10</span> : <span className="text-slate-400">-</span>}</td>
+                      <td className="py-3 px-4">
+                        <div className="flex gap-2">
+                          {interview.status === 'completed' && <button onClick={() => navigate('/feedback', { state: { sessionId: interview.session_id } })} className="text-xs bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-400 px-3 py-1 rounded hover:bg-cyan-200 dark:hover:bg-cyan-900/50 transition-colors">View</button>}
+                          <button onClick={() => handleDeleteInterview(interview.session_id)} className="text-xs bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 px-3 py-1 rounded hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors">Delete</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </div>

@@ -30,7 +30,16 @@ function VerifyOTP() {
       localStorage.setItem('user', JSON.stringify(res.data.user))
       localStorage.removeItem('login_email')
       toast.success('Login successful!')
-      navigate('/dashboard')
+      
+      // --- SMART REDIRECTION BASED ON ROLE ---
+      const userRole = res.data.user.role;
+      if (userRole === 'admin') {
+        navigate('/admin/dashboard')
+      } else {
+        navigate('/dashboard')
+      }
+      // ---------------------------------------
+      
     } catch (err) {
       toast.error(err.response?.data?.error || 'Invalid OTP')
     } finally {
