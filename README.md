@@ -38,10 +38,10 @@ An enterprise-grade, full-stack interview simulation platform that leverages **M
 ## 🏗️ System Architecture
 
 The system operates on a decoupled, multi-agent pipeline:
-1. **Ingestion:** Candidate uploads a resume $\rightarrow$ Parser Agent extracts text $\rightarrow$ Vector embeddings stored in ChromaDB.
-2. **Interview:** Candidate selects a Job Role $\rightarrow$ Interviewer Agent queries ChromaDB (RAG) $\rightarrow$ LLM (Groq) generates context-aware questions.
-3. **Evaluation:** Upon completion, Evaluator Agent analyzes the transcript $\rightarrow$ Generates scores/feedback $\rightarrow$ Saves to PostgreSQL $\rightarrow$ Triggers automated email report.
-4. **Administration:** Admin authenticates via RBAC $\rightarrow$ Accesses protected routes to moderate users and review system metrics.
+1. **Ingestion:** Candidate uploads a resume → Parser Agent extracts text → Vector embeddings stored in ChromaDB.
+2. **Interview:** Candidate selects a Job Role → Interviewer Agent queries ChromaDB (RAG) → LLM (Groq) generates context-aware questions.
+3. **Evaluation:** Upon completion, Evaluator Agent analyzes the transcript → Generates scores/feedback → Saves to PostgreSQL → Triggers automated email report.
+4. **Administration:** Admin authenticates via RBAC → Accesses protected routes to moderate users and review system metrics.
 
 ---
 
@@ -76,9 +76,10 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install dependencies
 pip install flask flask-cors flask-sqlalchemy flask-mail psycopg2-binary langchain-groq pypdf chromadb pyjwt werkzeug python-dotenv
+```
 
-# Create a .env file in the backend folder and add your credentials:
-# .env
+Create a `.env` file in the `backend` folder and add your credentials:
+```env
 SECRET_KEY=your_super_secret_key
 GROQ_API_KEY=your_groq_api_key
 DATABASE_URL=postgresql://postgres:your_password@localhost:5432/interview_db
@@ -89,15 +90,15 @@ MAIL_PORT=587
 MAIL_USE_TLS=True
 MAIL_USERNAME=your_email@gmail.com
 MAIL_PASSWORD=your_app_password
+```
 
-# Backend setup
-# Navigate to frontend directory
-cd backend
-
+```bash
 # Initialize the database and run the server
 python app.py
+```
 
-# Frontend Setup
+### 2. Frontend Setup
+```bash
 # Navigate to frontend directory
 cd frontend
 
@@ -106,9 +107,13 @@ npm install
 
 # Start the development server
 npm run dev
-The application will be available at http://localhost:5173
+```
+*The application will be available at `http://localhost:5173`*
 
-###📂 Project Structure
+---
+
+## 📂 Project Structure
+```text
 multi-agent-interview-system/
 ├── backend/
 │   ├── app.py                 # Main Flask application & API routes
@@ -124,5 +129,6 @@ multi-agent-interview-system/
 │   │   └── App.jsx            # Main routing configuration
 │   └── package.json
 └── README.md
+```
 
-Note: This project is developed for academic purposes as part of the MCA final year curriculum. All AI interactions are simulated using the Groq API for rapid, low-latency inference.
+> **Note:** This project is developed for academic purposes as part of the MCA final year curriculum. All AI interactions are simulated using the Groq API for rapid, low-latency inference.
