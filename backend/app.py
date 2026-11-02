@@ -17,14 +17,12 @@ from utils.resume_parser import process_resume, get_resume_context, collection
 app = Flask(__name__)
 app.config.from_object(Config)
 
-# --- EMAIL CONFIGURATION ---
 app.config['MAIL_SERVER'] = os.getenv('MAIL_SERVER')
 app.config['MAIL_PORT'] = int(os.getenv('MAIL_PORT'))
 app.config['MAIL_USE_TLS'] = os.getenv('MAIL_USE_TLS') == 'True'
 app.config['MAIL_USERNAME'] = os.getenv('MAIL_USERNAME')
 app.config['MAIL_PASSWORD'] = os.getenv('MAIL_PASSWORD')
 
-# --- IST TIMEZONE DEFINITION ---
 IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
 mail = Mail(app)
@@ -41,9 +39,6 @@ if not os.path.exists(UPLOAD_FOLDER):
 
 otp_store = {} 
 
-# ==============================================================================
-# DECORATORS & HELPERS
-# ==============================================================================
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -97,7 +92,7 @@ def verify_signup_otp():
     email, otp = data.get('email', ''), data.get('otp', '')
     if email in otp_store and otp_store[email]['otp'] == otp and otp_store[email].get('type') == 'signup':
         user_data = otp_store[email]['data']
-        new_user = User(name=user_data['name'], email=email, password_hash=generate_password_hash(user_data['password'], method='pbkdf2:sha256'), role='candidate')
+        new_user = User(name=user_data['name'], email=email, password_hash=generate_password_hash(user_data['password'], method='pbkdf2:sha256'), role='candidate', status='active')
         db.session.add(new_user); db.session.commit()
         del otp_store[email]
         return jsonify({"status": "success", "message": "Signup successful!"}), 201
@@ -110,6 +105,12 @@ def login():
     password = data.get('password', '')
     user = User.query.filter_by(email=email).first()
     if not user: return jsonify({"error": "User not found"}), 404
+    
+    # --- NEW: Block User Check ---
+    if user.status == 'blocked': 
+        return jsonify({"error": "This account has been blocked by an administrator."}), 403
+    # -----------------------------
+    
     if not check_password_hash(user.password_hash, password): return jsonify({"error": "Invalid password"}), 401
 
     otp = str(random.randint(100000, 999999))
@@ -117,7 +118,7 @@ def login():
     email_sent = send_email("Your Login OTP", email, f"Your OTP for login is: {otp}.")
     if email_sent: return jsonify({"status": "success", "message": "OTP sent to email!"})
     else:
-        print(f"️ Email server failed. [DEV MODE] Login OTP for {email} is: {otp}")
+        print(f"⚠️ Email server failed. [DEV MODE] Login OTP for {email} is: {otp}")
         return jsonify({"status": "success", "message": f"Email failed, but [DEV MODE] OTP is: {otp}"})
 
 @app.route('/api/verify-login-otp', methods=['POST'])
@@ -129,7 +130,6 @@ def verify_login_otp():
         if user:
             token = jwt.encode({'user_id': user.user_id, 'email': user.email, 'role': user.role, 'exp': datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=24)}, app.config['SECRET_KEY'], algorithm='HS256')
             del otp_store[email]
-            # --- FIXED: Added "role": user.role to the response ---
             return jsonify({"status": "success", "token": token, "user": {"user_id": user.user_id, "name": user.name, "email": user.email, "role": user.role}})
     return jsonify({"error": "Invalid OTP or session expired"}), 401
 
@@ -146,7 +146,7 @@ def forgot_password_request():
         email_sent = send_email("Your Password Reset OTP", email, f"Your OTP for password reset is: {otp}.")
         if email_sent: return jsonify({"status": "success", "message": "OTP sent to email!"})
         else:
-            print(f"️ Email server failed. [DEV MODE] Forgot Password OTP for {email} is: {otp}")
+            print(f"⚠️ Email server failed. [DEV MODE] Forgot Password OTP for {email} is: {otp}")
             return jsonify({"status": "success", "message": f"Email failed, but [DEV MODE] OTP is: {otp}"})
     except Exception as e: return jsonify({"error": str(e)}), 500
 
@@ -297,7 +297,8 @@ def admin_dashboard(current_user):
 @admin_required
 def get_all_users(current_user):
     users = User.query.all()
-    user_list = [{"user_id": u.user_id, "name": u.name, "email": u.email, "role": u.role, "interviews_count": InterviewSession.query.filter_by(user_id=u.user_id).count()} for u in users]
+    # --- UPDATED: Added status to the response ---
+    user_list = [{"user_id": u.user_id, "name": u.name, "email": u.email, "role": u.role, "status": u.status, "interviews_count": InterviewSession.query.filter_by(user_id=u.user_id).count()} for u in users]
     return jsonify({"status": "success", "data": user_list})
 
 @app.route('/api/admin/users/<int:user_id>', methods=['DELETE'])
@@ -320,6 +321,18 @@ def reset_user_password(current_user, user_id):
     db.session.commit()
     send_email("Password Reset by Admin", user.email, f"Hello {user.name},\n\nYour password has been reset by the system administrator.\nYour temporary password is: {temp_password}\n\nPlease log in and change it immediately.")
     return jsonify({"status": "success", "message": f"Password reset successfully. Temp password: {temp_password}"})
+
+# --- NEW: Toggle Block User Route ---
+@app.route('/api/admin/users/<int:user_id>/toggle-block', methods=['POST'])
+@admin_required
+def toggle_block_user(current_user, user_id):
+    user = User.query.get(user_id)
+    if not user: return jsonify({"error": "User not found"}), 404
+    
+    user.status = 'blocked' if user.status == 'active' else 'active'
+    db.session.commit()
+    return jsonify({"status": "success", "message": f"User status changed to {user.status}"})
+# ------------------------------------
 
 @app.route('/api/dev/promote-to-admin', methods=['POST'])
 def promote_to_admin():

@@ -38,6 +38,19 @@ function AdminUsers() {
     } catch (err) { toast.error(err.response?.data?.error || 'Failed to reset password') }
   }
 
+  // --- NEW: Handle Block/Unblock ---
+  const handleToggleBlock = async (userId, userName, currentStatus) => {
+    const action = currentStatus === 'active' ? 'block' : 'unblock';
+    if (!window.confirm(`Are you sure you want to ${action} ${userName}?`)) return;
+    try {
+      const token = localStorage.getItem('token');
+      const res = await axios.post(`http://127.0.0.1:5000/api/admin/users/${userId}/toggle-block`, {}, { headers: { 'Authorization': `Bearer ${token}` } });
+      toast.success(res.data.message);
+      fetchUsers();
+    } catch (err) { toast.error('Failed to update user status'); }
+  };
+  // ---------------------------------
+
   const filteredUsers = users.filter(user => user.name.toLowerCase().includes(searchTerm.toLowerCase()) || user.email.toLowerCase().includes(searchTerm.toLowerCase()))
 
   if (isLoading) return (
@@ -49,7 +62,6 @@ function AdminUsers() {
   return (
     <div className="min-h-screen relative overflow-hidden bg-gray-50 dark:bg-slate-900 transition-colors duration-300">
       <StarryBackground />
-      {/* FIXED: Added pt-24 to push content below Navbar */}
       <div className="relative z-10 container mx-auto px-6 py-8 pt-24">
         <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
           <div>
@@ -67,13 +79,16 @@ function AdminUsers() {
                   <th className="text-left py-4 px-6 text-sm font-semibold text-slate-700 dark:text-slate-300">Name</th>
                   <th className="text-left py-4 px-6 text-sm font-semibold text-slate-700 dark:text-slate-300">Email</th>
                   <th className="text-left py-4 px-6 text-sm font-semibold text-slate-700 dark:text-slate-300">Role</th>
+                  {/* --- NEW: Status Header --- */}
+                  <th className="text-left py-4 px-6 text-sm font-semibold text-slate-700 dark:text-slate-300">Status</th>
+                  {/* ---------------------- */}
                   <th className="text-left py-4 px-6 text-sm font-semibold text-slate-700 dark:text-slate-300">Interviews</th>
                   <th className="text-left py-4 px-6 text-sm font-semibold text-slate-700 dark:text-slate-300">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredUsers.length === 0 ? (
-                  <tr><td colSpan="5" className="text-center py-8 text-slate-500">No users found.</td></tr>
+                  <tr><td colSpan="6" className="text-center py-8 text-slate-500">No users found.</td></tr>
                 ) : (
                   filteredUsers.map((user) => (
                     <tr key={user.user_id} className="border-t border-slate-200 dark:border-slate-700/50 hover:bg-white/5 dark:hover:bg-slate-800/50 transition-colors">
@@ -84,11 +99,27 @@ function AdminUsers() {
                           {user.role.toUpperCase()}
                         </span>
                       </td>
+                      
+                      {/* --- NEW: Status Column --- */}
+                      <td className="py-4 px-6">
+                        <span className={`text-xs font-bold px-3 py-1 rounded-full border ${user.status === 'blocked' ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800' : 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800'}`}>
+                          {user.status ? user.status.toUpperCase() : 'ACTIVE'}
+                        </span>
+                      </td>
+                      {/* ------------------------ */}
+
                       <td className="py-4 px-6 text-sm text-slate-600 dark:text-slate-400">{user.interviews_count}</td>
                       <td className="py-4 px-6">
                         <div className="flex gap-2">
                           <button onClick={() => handleResetPassword(user.user_id, user.email)} className="text-xs bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 px-3 py-1.5 rounded hover:bg-amber-200 dark:hover:bg-amber-900/50 transition-colors font-medium">Reset PW</button>
-                          <button onClick={() => handleDeleteUser(user.user_id, user.name)} className="text-xs bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 px-3 py-1.5 rounded hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors font-medium">Delete</button>
+                          
+                          {/* --- NEW: Block/Unblock Button --- */}
+                          <button onClick={() => handleToggleBlock(user.user_id, user.name, user.status)} className={`text-xs px-3 py-1.5 rounded transition-colors font-medium ${user.status === 'blocked' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-200' : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 hover:bg-red-200'}`}>
+                            {user.status === 'blocked' ? 'Unblock' : 'Block'}
+                          </button>
+                          {/* -------------------------------- */}
+
+                          <button onClick={() => handleDeleteUser(user.user_id, user.name)} className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-3 py-1.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors font-medium">Delete</button>
                         </div>
                       </td>
                     </tr>
