@@ -235,6 +235,9 @@ def delete_interview(current_user, session_id):
     db.session.delete(session); db.session.commit()
     return jsonify({"status": "success", "message": "Interview deleted successfully!"})
 
+# ==============================================================================
+# USER STATS ROUTE (UPDATED with session_id)
+# ==============================================================================
 @app.route('/api/user/stats', methods=['GET'])
 @token_required
 def get_user_stats(current_user):
@@ -246,10 +249,28 @@ def get_user_stats(current_user):
             feedback = Feedback.query.filter_by(session_id=session.session_id).first()
             if feedback:
                 total_tech += feedback.technical_score; total_behav += feedback.behavioral_score; count += 1
-                interview_history.append({"interview_number": count, "date": session.started_at.strftime("%d %b"), "job_role": session.job_role, "technical_score": feedback.technical_score, "behavioral_score": feedback.behavioral_score, "average_score": round((feedback.technical_score + feedback.behavioral_score) / 2, 1)})
-        return jsonify({"status": "success", "total_interviews": count, "average_technical_score": round(total_tech / count, 1) if count > 0 else 0, "average_behavioral_score": round(total_behav / count, 1) if count > 0 else 0, "interview_history": interview_history})
+                # ✅ FIXED: Added session_id to the response
+                interview_history.append({
+                    "session_id": session.session_id,
+                    "interview_number": count, 
+                    "date": session.started_at.strftime("%d %b %Y, %I:%M %p"), 
+                    "job_role": session.job_role, 
+                    "technical_score": feedback.technical_score, 
+                    "behavioral_score": feedback.behavioral_score, 
+                    "average_score": round((feedback.technical_score + feedback.behavioral_score) / 2, 1)
+                })
+        return jsonify({
+            "status": "success", 
+            "total_interviews": count, 
+            "average_technical_score": round(total_tech / count, 1) if count > 0 else 0, 
+            "average_behavioral_score": round(total_behav / count, 1) if count > 0 else 0, 
+            "interview_history": interview_history
+        })
     except Exception as e: return jsonify({"error": str(e)}), 500
 
+# ==============================================================================
+# EVALUATE ROUTE
+# ==============================================================================
 @app.route('/api/evaluate/<int:session_id>', methods=['POST'])
 @token_required
 def evaluate_session(current_user, session_id):
@@ -337,7 +358,7 @@ def promote_to_admin():
     return jsonify({"error": "User not found"}), 404
 
 # ==============================================================================
-# PROFILE SETTINGS ROUTES (NEW)
+# PROFILE SETTINGS ROUTES
 # ==============================================================================
 @app.route('/api/update-profile', methods=['POST'])
 @token_required

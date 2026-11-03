@@ -252,13 +252,51 @@ function Interview() {
     setTechScore(prev => Math.min(prev + Math.random() * 2 + 1, 10))
   }
 
-  const handleEndInterview = () => {
-    if (window.confirm("Are you sure you want to end the interview and see your evaluation?")) {
-      addLog('warning', 'Interview manually ended by candidate.')
-      toast.success('Generating evaluation report...')
-      setTimeout(() => navigate('/feedback'), 1500)
+  const handleEndInterview = async () => {
+  if (!window.confirm("Are you sure you want to end the interview and generate your report?")) return;
+  
+  setIsLoading(true);
+  try {
+    const token = localStorage.getItem('token');
+    
+    // If sessionId exists, use it directly
+    let evalSessionId = sessionId;
+    
+    // If no sessionId, fetch the active session
+    if (!evalSessionId) {
+      const interviewsRes = await axios.get('http://127.0.0.1:5000/api/interviews', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      // Find the most recent "in_progress" session
+      const activeSession = interviewsRes.data.data.find(s => s.status === 'in_progress');
+      
+      if (!activeSession) {
+        toast.error("No active interview found!");
+        setIsLoading(false);
+        return;
+      }
+      
+      evalSessionId = activeSession.session_id;
     }
+    
+    // 1. Call the backend to evaluate the session
+    await axios.post(`http://127.0.0.1:5000/api/evaluate/${evalSessionId}`, {}, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    
+    toast.success("Interview evaluated successfully!");
+    
+    // 2. Navigate to the feedback page WITH the session ID
+    navigate(`/feedback/${evalSessionId}`);
+    
+  } catch (err) {
+    console.error(err);
+    toast.error("Failed to evaluate interview. Please try again.");
+  } finally {
+    setIsLoading(false);
   }
+};
 
   const handleSend = async () => {
     if (!input.trim() || isLoading) return
