@@ -1,104 +1,104 @@
-import { useContext, useState } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
-import { ThemeContext } from '../context/ThemeContext'
-import ThemeToggle from './ThemeToggle'
+import { Link, useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
 
 function Navbar() {
   const navigate = useNavigate()
-  const location = useLocation()
-  const { theme } = useContext(ThemeContext)
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false)
+  const user = JSON.parse(localStorage.getItem('user')) || {}
   
-  const userStr = localStorage.getItem('user')
-  const userName = userStr ? JSON.parse(userStr).name : 'Candidate'
-  const profilePic = localStorage.getItem('profilePic')
+  // 3-Way Theme Logic
+  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'system')
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false)
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+
+  useEffect(() => {
+    const root = window.document.documentElement
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    const applyTheme = (currentTheme) => {
+      if (currentTheme === 'dark') root.classList.add('dark')
+      else if (currentTheme === 'light') root.classList.remove('dark')
+      else { if (mediaQuery.matches) root.classList.add('dark'); else root.classList.remove('dark') }
+      localStorage.setItem('theme', currentTheme)
+    }
+    applyTheme(theme)
+    const handleChange = () => { if (theme === 'system') applyTheme('system') }
+    mediaQuery.addEventListener('change', handleChange)
+    return () => mediaQuery.removeEventListener('change', handleChange)
+  }, [theme])
 
   const handleLogout = () => {
     localStorage.removeItem('token')
     localStorage.removeItem('user')
-    navigate('/')
+    navigate('/login')
   }
 
-  // Don't show navbar on login/signup pages
-  if (location.pathname === '/' || location.pathname === '/signup') return null;
-
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50 glass-card border-b border-white/20 dark:border-slate-700/50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between items-center h-16">
+    <nav className="fixed top-0 left-0 right-0 z-50 glass-card border-b border-white/20 dark:border-slate-700/50 px-6 py-4 backdrop-blur-md bg-white/30 dark:bg-slate-900/30">
+      <div className="max-w-7xl mx-auto flex justify-between items-center">
+        
+        {/* Logo */}
+        <Link to={user.role === 'admin' ? '/admin/dashboard' : '/dashboard'} className="text-xl font-bold text-slate-800 dark:text-white flex items-center gap-2">
+          <span className="text-2xl">🤖</span> AI Interview
+        </Link>
+
+        {/* Desktop Navigation */}
+        <div className="hidden md:flex items-center gap-6">
           
-          {/* Logo & System Status */}
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-white font-bold text-lg shadow-lg">
-              AI
-            </div>
-            <div>
-              <h1 className="text-xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 dark:from-cyan-400 dark:to-blue-400 bg-clip-text text-transparent">
-                Multi-Agent Interview
-              </h1>
-              <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/30 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
-                ● SYSTEM V2.4 ACTIVE
-              </span>
-            </div>
+          {/* Role-Based Links */}
+          {user.role === 'admin' ? (
+            <>
+              <Link to="/admin/dashboard" className="text-sm font-medium text-slate-700 dark:text-slate-300 hover:text-cyan-500 transition-colors">Dashboard</Link>
+              <Link to="/admin/users" className="text-sm font-medium text-slate-700 dark:text-slate-300 hover:text-cyan-500 transition-colors">Manage Users</Link>
+            </>
+          ) : (
+            <>
+              <Link to="/dashboard" className="text-sm font-medium text-slate-700 dark:text-slate-300 hover:text-cyan-500 transition-colors">Dashboard</Link>
+              <Link to="/interview" className="text-sm font-medium text-slate-700 dark:text-slate-300 hover:text-cyan-500 transition-colors">Interview</Link>
+              <Link to="/profile" className="text-sm font-medium text-slate-700 dark:text-slate-300 hover:text-cyan-500 transition-colors">Profile</Link>
+            </>
+          )}
+          
+          {/* Theme Toggle */}
+          <div className="relative">
+            <button onClick={() => setThemeMenuOpen(!themeMenuOpen)} className="p-2 rounded-full bg-white/10 dark:bg-slate-800/50 border border-white/20 dark:border-slate-700 text-slate-700 dark:text-white hover:bg-white/20 transition-all">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+            </button>
+            {themeMenuOpen && (
+              <div className="absolute right-0 mt-2 w-32 rounded-xl bg-white/90 dark:bg-slate-800/90 backdrop-blur-xl shadow-xl border border-slate-200 dark:border-slate-700 py-1">
+                <button onClick={() => { setTheme('light'); setThemeMenuOpen(false); }} className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 hover:bg-slate-100 dark:hover:bg-slate-700 ${theme === 'light' ? 'text-cyan-500 font-bold' : 'text-slate-700 dark:text-slate-300'}`}>☀ Light</button>
+                <button onClick={() => { setTheme('dark'); setThemeMenuOpen(false); }} className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 hover:bg-slate-100 dark:hover:bg-slate-700 ${theme === 'dark' ? 'text-cyan-500 font-bold' : 'text-slate-700 dark:text-slate-300'}`}>🌙 Dark</button>
+                <button onClick={() => { setTheme('system'); setThemeMenuOpen(false); }} className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 hover:bg-slate-100 dark:hover:bg-slate-700 ${theme === 'system' ? 'text-cyan-500 font-bold' : 'text-slate-700 dark:text-slate-300'}`}>🖥 System</button>
+              </div>
+            )}
           </div>
 
-          {/* Right Side: Theme Toggle & Profile */}
-          <div className="flex items-center gap-4">
-            {/* 3-Way Theme Toggle */}
-            <ThemeToggle />
-
-            {/* Profile Dropdown */}
-            <div className="relative">
-              <button 
-                onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                className="flex items-center gap-2 p-1.5 pr-3 rounded-full glass-button-secondary hover:bg-white/30 dark:hover:bg-slate-700/50 transition-all"
-              >
-                <div className="w-8 h-8 rounded-full overflow-hidden bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center text-white font-bold text-sm border-2 border-white/20 shadow-sm">
-                  {profilePic ? (
-                    <img src={profilePic} alt="Profile" className="w-full h-full object-cover" />
-                  ) : (
-                    userName.charAt(0).toUpperCase()
-                  )}
-                </div>
-                <span className="hidden sm:block text-sm font-medium text-slate-700 dark:text-slate-200">{userName}</span>
-                <svg className="w-4 h-4 text-slate-500 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-
-              {isDropdownOpen && (
-                <div className="absolute right-0 mt-2 w-56 glass-card rounded-xl shadow-2xl py-2 z-50 border border-white/20 dark:border-slate-700/50">
-                  <button onClick={() => { navigate('/dashboard'); setIsDropdownOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-white/20 dark:hover:bg-slate-700/50 transition-colors flex items-center gap-2">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
-                    Dashboard
-                  </button>
-                  
-                  <button onClick={() => { navigate('/interview'); setIsDropdownOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-white/20 dark:hover:bg-slate-700/50 transition-colors flex items-center gap-2">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
-                    Start Interview
-                  </button>
-
-                  <button onClick={() => { navigate('/feedback'); setIsDropdownOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-white/20 dark:hover:bg-slate-700/50 transition-colors flex items-center gap-2">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                    Feedback Reports
-                  </button>
-
-                  <button onClick={() => { navigate('/profile'); setIsDropdownOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-white/20 dark:hover:bg-slate-700/50 transition-colors flex items-center gap-2">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
-                    Profile Settings
-                  </button>
-
-                  <div className="border-t border-slate-200 dark:border-slate-700 my-1"></div>
-                  <button onClick={handleLogout} className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-2">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
-                    Logout
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
+          {/* Logout Button */}
+          <button onClick={handleLogout} className="text-sm font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 px-4 py-2 rounded-lg hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors border border-red-200 dark:border-red-800">Logout</button>
         </div>
+
+        {/* Mobile Menu Button */}
+        <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="md:hidden text-slate-700 dark:text-white">
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+        </button>
       </div>
+
+      {/* Mobile Navigation Dropdown */}
+      {mobileMenuOpen && (
+        <div className="md:hidden mt-4 flex flex-col gap-4 pb-4 border-t border-white/20 dark:border-slate-700/50 pt-4">
+          {user.role === 'admin' ? (
+            <>
+              <Link to="/admin/dashboard" className="text-sm font-medium text-slate-700 dark:text-slate-300">Dashboard</Link>
+              <Link to="/admin/users" className="text-sm font-medium text-slate-700 dark:text-slate-300">Manage Users</Link>
+            </>
+          ) : (
+            <>
+              <Link to="/dashboard" className="text-sm font-medium text-slate-700 dark:text-slate-300">Dashboard</Link>
+              <Link to="/interview" className="text-sm font-medium text-slate-700 dark:text-slate-300">Interview</Link>
+              <Link to="/profile" className="text-sm font-medium text-slate-700 dark:text-slate-300">Profile</Link>
+            </>
+          )}
+          <button onClick={handleLogout} className="text-sm font-medium text-red-500 text-left">Logout</button>
+        </div>
+      )}
     </nav>
   )
 }

@@ -105,12 +105,7 @@ def login():
     password = data.get('password', '')
     user = User.query.filter_by(email=email).first()
     if not user: return jsonify({"error": "User not found"}), 404
-    
-    # --- NEW: Block User Check ---
-    if user.status == 'blocked': 
-        return jsonify({"error": "This account has been blocked by an administrator."}), 403
-    # -----------------------------
-    
+    if user.status == 'blocked': return jsonify({"error": "This account has been blocked by an administrator."}), 403
     if not check_password_hash(user.password_hash, password): return jsonify({"error": "Invalid password"}), 401
 
     otp = str(random.randint(100000, 999999))
@@ -297,7 +292,6 @@ def admin_dashboard(current_user):
 @admin_required
 def get_all_users(current_user):
     users = User.query.all()
-    # --- UPDATED: Added status to the response ---
     user_list = [{"user_id": u.user_id, "name": u.name, "email": u.email, "role": u.role, "status": u.status, "interviews_count": InterviewSession.query.filter_by(user_id=u.user_id).count()} for u in users]
     return jsonify({"status": "success", "data": user_list})
 
@@ -322,17 +316,14 @@ def reset_user_password(current_user, user_id):
     send_email("Password Reset by Admin", user.email, f"Hello {user.name},\n\nYour password has been reset by the system administrator.\nYour temporary password is: {temp_password}\n\nPlease log in and change it immediately.")
     return jsonify({"status": "success", "message": f"Password reset successfully. Temp password: {temp_password}"})
 
-# --- NEW: Toggle Block User Route ---
 @app.route('/api/admin/users/<int:user_id>/toggle-block', methods=['POST'])
 @admin_required
 def toggle_block_user(current_user, user_id):
     user = User.query.get(user_id)
     if not user: return jsonify({"error": "User not found"}), 404
-    
     user.status = 'blocked' if user.status == 'active' else 'active'
     db.session.commit()
     return jsonify({"status": "success", "message": f"User status changed to {user.status}"})
-# ------------------------------------
 
 @app.route('/api/dev/promote-to-admin', methods=['POST'])
 def promote_to_admin():
@@ -344,6 +335,36 @@ def promote_to_admin():
         db.session.commit()
         return jsonify({"status": "success", "message": f"{email} is now an admin!"})
     return jsonify({"error": "User not found"}), 404
+
+# ==============================================================================
+# PROFILE SETTINGS ROUTES (NEW)
+# ==============================================================================
+@app.route('/api/update-profile', methods=['POST'])
+@token_required
+def update_profile(current_user):
+    data = request.get_json()
+    new_name = data.get('name', '').strip()
+    if not new_name:
+        return jsonify({"error": "Name cannot be empty"}), 400
+    current_user.name = new_name
+    db.session.commit()
+    return jsonify({"status": "success", "message": "Profile updated successfully!"})
+
+@app.route('/api/change-password', methods=['POST'])
+@token_required
+def change_password(current_user):
+    data = request.get_json()
+    current_pw = data.get('current_password', '')
+    new_pw = data.get('new_password', '')
+    
+    if not check_password_hash(current_user.password_hash, current_pw):
+        return jsonify({"error": "Current password is incorrect"}), 401
+    if len(new_pw) < 6:
+        return jsonify({"error": "New password must be at least 6 characters"}), 400
+        
+    current_user.password_hash = generate_password_hash(new_pw, method='pbkdf2:sha256')
+    db.session.commit()
+    return jsonify({"status": "success", "message": "Password changed successfully!"})
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
