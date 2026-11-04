@@ -8,6 +8,8 @@ from flask_mail import Mail, Message
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
+from sqlalchemy import func
+from datetime import timedelta
 from config import Config
 from models import db, User, InterviewSession, Question, Response, Feedback
 from agents.interviewer import get_interviewer_response
@@ -235,9 +237,6 @@ def delete_interview(current_user, session_id):
     db.session.delete(session); db.session.commit()
     return jsonify({"status": "success", "message": "Interview deleted successfully!"})
 
-# ==============================================================================
-# USER STATS ROUTE (UPDATED with session_id)
-# ==============================================================================
 @app.route('/api/user/stats', methods=['GET'])
 @token_required
 def get_user_stats(current_user):
@@ -249,7 +248,6 @@ def get_user_stats(current_user):
             feedback = Feedback.query.filter_by(session_id=session.session_id).first()
             if feedback:
                 total_tech += feedback.technical_score; total_behav += feedback.behavioral_score; count += 1
-                # ✅ FIXED: Added session_id to the response
                 interview_history.append({
                     "session_id": session.session_id,
                     "interview_number": count, 
@@ -268,9 +266,6 @@ def get_user_stats(current_user):
         })
     except Exception as e: return jsonify({"error": str(e)}), 500
 
-# ==============================================================================
-# EVALUATE ROUTE
-# ==============================================================================
 @app.route('/api/evaluate/<int:session_id>', methods=['POST'])
 @token_required
 def evaluate_session(current_user, session_id):
@@ -304,10 +299,48 @@ def evaluate_session(current_user, session_id):
 # ==============================================================================
 # ADMIN ROUTES (Protected)
 # ==============================================================================
-@app.route('/api/admin/dashboard', methods=['GET'])
+@app.route('/api/admin/metrics', methods=['GET'])
 @admin_required
-def admin_dashboard(current_user):
-    return jsonify({"status": "success", "message": f"Welcome to the Admin Dashboard, {current_user.name}!", "data": {"total_users": User.query.count(), "total_interviews": InterviewSession.query.count()}})
+def get_admin_metrics(current_user):
+    # 1. Basic Counts
+    total_candidates = User.query.filter_by(role='candidate').count()
+    total_interviews = InterviewSession.query.count()
+    
+    # 2. Average Scores
+    feedbacks = Feedback.query.all()
+    avg_tech = round(sum(f.technical_score for f in feedbacks) / len(feedbacks), 1) if feedbacks else 0
+    avg_behav = round(sum(f.behavioral_score for f in feedbacks) / len(feedbacks), 1) if feedbacks else 0
+    
+    # 3. Interview Volume (Last 30 Days) for Bar Chart
+    thirty_days_ago = datetime.datetime.now(datetime.timezone.utc) - timedelta(days=30)
+    recent_sessions = InterviewSession.query.filter(InterviewSession.started_at >= thirty_days_ago).all()
+    
+    volume_data = {}
+    for session in recent_sessions:
+        date_str = session.started_at.strftime('%m-%d')
+        volume_data[date_str] = volume_data.get(date_str, 0) + 1
+    
+    chart_volume = []
+    for i in range(30, -1, -1):
+        day = (datetime.datetime.now(datetime.timezone.utc) - timedelta(days=i))
+        day_str = day.strftime('%m-%d')
+        chart_volume.append({"date": day_str, "count": volume_data.get(day_str, 0)})
+
+    # 4. Job Role Distribution for Pie Chart
+    roles = db.session.query(InterviewSession.job_role, func.count(InterviewSession.session_id)).group_by(InterviewSession.job_role).all()
+    chart_roles = [{"name": role, "value": count} for role, count in roles if role]
+
+    return jsonify({
+        "status": "success",
+        "data": {
+            "total_candidates": total_candidates,
+            "total_interviews": total_interviews,
+            "avg_tech_score": avg_tech,
+            "avg_behav_score": avg_behav,
+            "volume_chart": chart_volume,
+            "role_chart": chart_roles
+        }
+    })
 
 @app.route('/api/admin/users', methods=['GET'])
 @admin_required
