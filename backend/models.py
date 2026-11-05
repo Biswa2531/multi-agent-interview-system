@@ -47,3 +47,12 @@ class Feedback(db.Model):
     strengths = db.Column(db.Text)
     weaknesses = db.Column(db.Text)
     career_recommendations = db.Column(db.Text)
+
+class Violation(db.Model):
+    __tablename__ = 'violations'
+    violation_id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.user_id'), nullable=False)
+    session_id = db.Column(db.Integer, db.ForeignKey('interview_sessions.session_id'), nullable=False)
+    violation_type = db.Column(db.String(50), nullable=False)  # e.g., 'Tab Switch', 'Webcam Off'
+    timestamp = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    description = db.Column(db.Text)

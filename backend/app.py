@@ -302,16 +302,13 @@ def evaluate_session(current_user, session_id):
 @app.route('/api/admin/metrics', methods=['GET'])
 @admin_required
 def get_admin_metrics(current_user):
-    # 1. Basic Counts
     total_candidates = User.query.filter_by(role='candidate').count()
     total_interviews = InterviewSession.query.count()
     
-    # 2. Average Scores
     feedbacks = Feedback.query.all()
     avg_tech = round(sum(f.technical_score for f in feedbacks) / len(feedbacks), 1) if feedbacks else 0
     avg_behav = round(sum(f.behavioral_score for f in feedbacks) / len(feedbacks), 1) if feedbacks else 0
     
-    # 3. Interview Volume (Last 30 Days) for Bar Chart
     thirty_days_ago = datetime.datetime.now(datetime.timezone.utc) - timedelta(days=30)
     recent_sessions = InterviewSession.query.filter(InterviewSession.started_at >= thirty_days_ago).all()
     
@@ -326,7 +323,6 @@ def get_admin_metrics(current_user):
         day_str = day.strftime('%m-%d')
         chart_volume.append({"date": day_str, "count": volume_data.get(day_str, 0)})
 
-    # 4. Job Role Distribution for Pie Chart
     roles = db.session.query(InterviewSession.job_role, func.count(InterviewSession.session_id)).group_by(InterviewSession.job_role).all()
     chart_roles = [{"name": role, "value": count} for role, count in roles if role]
 
@@ -341,6 +337,61 @@ def get_admin_metrics(current_user):
             "role_chart": chart_roles
         }
     })
+
+@app.route('/api/admin/interviews', methods=['GET'])
+@admin_required
+def get_all_interviews(current_user):
+    try:
+        sessions = InterviewSession.query.order_by(InterviewSession.started_at.desc()).all()
+        result = []
+        for session in sessions:
+            user = User.query.get(session.user_id)
+            feedback = Feedback.query.filter_by(session_id=session.session_id).first()
+            question_count = Question.query.filter_by(session_id=session.session_id).count()
+            
+            raw_time = session.started_at
+            if raw_time:
+                if raw_time.tzinfo is None: raw_time = raw_time.replace(tzinfo=datetime.timezone.utc)
+                date_str = raw_time.astimezone(IST).strftime("%d %b %Y, %I:%M %p")
+            else: date_str = "Unknown Date"
+            
+            result.append({
+                "session_id": session.session_id,
+                "candidate_name": user.name if user else "Unknown",
+                "candidate_email": user.email if user else "Unknown",
+                "job_role": session.job_role,
+                "status": session.status,
+                "started_at": date_str,
+                "questions_count": question_count,
+                "technical_score": feedback.technical_score if feedback else None,
+                "behavioral_score": feedback.behavioral_score if feedback else None,
+                "strengths": feedback.strengths if feedback else None,
+                "weaknesses": feedback.weaknesses if feedback else None
+            })
+        return jsonify({"status": "success", "data": result})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/admin/interviews/<int:session_id>/override-score', methods=['POST'])
+@admin_required
+def override_score(current_user, session_id):
+    try:
+        data = request.get_json()
+        new_tech = data.get('technical_score')
+        new_behav = data.get('behavioral_score')
+        reason = data.get('reason', 'Manual override by admin')
+        
+        feedback = Feedback.query.filter_by(session_id=session_id).first()
+        if not feedback:
+            return jsonify({"error": "Feedback not found"}), 404
+        
+        if new_tech is not None: feedback.technical_score = int(new_tech)
+        if new_behav is not None: feedback.behavioral_score = int(new_behav)
+        
+        db.session.commit()
+        return jsonify({"status": "success", "message": f"Scores overridden. Reason: {reason}"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/admin/users', methods=['GET'])
 @admin_required
