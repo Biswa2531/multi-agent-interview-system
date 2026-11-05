@@ -11,7 +11,7 @@ from functools import wraps
 from sqlalchemy import func
 from datetime import timedelta
 from config import Config
-from models import db, User, InterviewSession, Question, Response, Feedback
+from models import db, User, InterviewSession, Question, Response, Feedback, Violation
 from agents.interviewer import get_interviewer_response
 from agents.evaluator import evaluate_interview
 from utils.resume_parser import process_resume, get_resume_context, collection
@@ -390,6 +390,58 @@ def override_score(current_user, session_id):
         
         db.session.commit()
         return jsonify({"status": "success", "message": f"Scores overridden. Reason: {reason}"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ==============================================================================
+# PROCTORING ROUTES (NEW)
+# ==============================================================================
+@app.route('/api/admin/proctoring', methods=['GET'])
+@admin_required
+def get_proctoring_logs(current_user):
+    try:
+        users = User.query.filter_by(role='candidate').all()
+        report = []
+        
+        for user in users:
+            sessions = InterviewSession.query.filter_by(user_id=user.user_id).all()
+            for session in sessions:
+                report.append({
+                    "user_id": user.user_id,
+                    "candidate_name": user.name,
+                    "candidate_email": user.email,
+                    "session_id": session.session_id,
+                    "job_role": session.job_role,
+                    "status": session.status,
+                    "started_at": session.started_at.strftime("%d %b %Y, %I:%M %p") if session.started_at else "Unknown"
+                })
+        
+        return jsonify({"status": "success", "data": report})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/admin/proctoring/<int:session_id>/flag', methods=['POST'])
+@admin_required
+def flag_violation(current_user, session_id):
+    try:
+        data = request.get_json()
+        violation_type = data.get('type', 'Manual Flag')
+        description = data.get('description', 'Flagged by admin')
+        
+        session = InterviewSession.query.get(session_id)
+        if not session: return jsonify({"error": "Session not found"}), 404
+        
+        # Log the violation into the database
+        new_violation = Violation(
+            user_id=session.user_id,
+            session_id=session_id,
+            violation_type=violation_type,
+            description=description
+        )
+        db.session.add(new_violation)
+        db.session.commit()
+        
+        return jsonify({"status": "success", "message": f"Session {session_id} flagged for {violation_type}"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

@@ -17,7 +17,8 @@ import Profile from './pages/Profile'
 // Admin Pages
 import AdminDashboard from './pages/AdminDashboard'
 import AdminUsers from './pages/AdminUsers'
-import AdminInterviews from './pages/AdminInterviews' // NEW
+import AdminInterviews from './pages/AdminInterviews'
+import AdminProctoring from './pages/AdminProctoring' // NEW
 
 function Layout() {
   const location = useLocation()
@@ -43,8 +44,8 @@ function Layout() {
           <Route index element={<Navigate to="dashboard" />} />
           <Route path="dashboard" element={<AdminDashboard />} />
           <Route path="users" element={<AdminUsers />} />
-          <Route path="interviews" element={<AdminInterviews />} /> {/* UPDATED */}
-          <Route path="proctoring" element={<div className="text-slate-800 dark:text-white text-xl font-bold">Proctoring Module (Coming Soon)</div>} />
+          <Route path="interviews" element={<AdminInterviews />} />
+          <Route path="proctoring" element={<AdminProctoring />} /> {/* UPDATED */}
           <Route path="settings" element={<div className="text-slate-800 dark:text-white text-xl font-bold">Settings Module (Coming Soon)</div>} />
         </Route>
       </Routes>

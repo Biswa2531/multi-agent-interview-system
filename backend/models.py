@@ -54,5 +54,5 @@ class Violation(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('users.user_id'), nullable=False)
     session_id = db.Column(db.Integer, db.ForeignKey('interview_sessions.session_id'), nullable=False)
     violation_type = db.Column(db.String(50), nullable=False)  # e.g., 'Tab Switch', 'Webcam Off'
-    timestamp = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
     description = db.Column(db.Text)
