@@ -47,7 +47,8 @@ class Feedback(db.Model):
     strengths = db.Column(db.Text)
     weaknesses = db.Column(db.Text)
     career_recommendations = db.Column(db.Text)
-
+    admin_override = db.Column(db.Boolean, default=False) # NEW LINE
+    
 class Violation(db.Model):
     __tablename__ = 'violations'
     violation_id = db.Column(db.Integer, primary_key=True)
