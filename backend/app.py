@@ -411,6 +411,7 @@ def get_interview_transcript(current_user, session_id):
         return jsonify({
             "status": "success",
             "data": {
+                 "session_id": session_id,
                 "candidate_name": user.name if user else "Unknown",
                 "candidate_email": user.email if user else "Unknown",
                 "job_role": session.job_role,
