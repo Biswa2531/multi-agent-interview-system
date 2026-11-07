@@ -14,32 +14,26 @@ function Interview() {
   const [isRoleDropdownOpen, setIsRoleDropdownOpen] = useState(false)
   const [roleInput, setRoleInput] = useState(jobRole)
   
-  // Round & Timer Configuration
   const roundLimits = { 1: 15 * 60, 2: 10 * 60, 3: 5 * 60 }
   const [currentRound, setCurrentRound] = useState(1)
   const [timeRemaining, setTimeRemaining] = useState(roundLimits[1])
   const [isActive, setIsActive] = useState(true)
   const [interviewStarted, setInterviewStarted] = useState(false)
 
-  // Chat State
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const chatEndRef = useRef(null)
 
-  // Code Editor State
   const [showCodeEditor, setShowCodeEditor] = useState(false)
   const [code, setCode] = useState('// Write your code here...\n\nfunction solution() {\n  \n}')
 
-  // Resume State
   const [resumeFile, setResumeFile] = useState(null)
 
-  // Deliberation Stream State
   const [logs, setLogs] = useState([
     { time: new Date().toLocaleTimeString(), type: 'info', text: 'System initialized. Waiting for candidate input...' }
   ])
 
-  // Proctoring & Score State
   const [violations, setViolations] = useState(0)
   const [webcamActive, setWebcamActive] = useState(false)
   const interviewStartedRef = useRef(interviewStarted)
@@ -47,7 +41,6 @@ function Interview() {
   const [techScore, setTechScore] = useState(0)
   const [behavScore, setBehavScore] = useState(0)
 
-  // Audio Visualizer State
   const [isListening, setIsListening] = useState(false)
   const [audioLevels, setAudioLevels] = useState(Array(8).fill(0))
   const audioContextRef = useRef(null)
@@ -55,29 +48,23 @@ function Interview() {
   const streamRef = useRef(null)
   const animationRef = useRef(null)
 
-  // NEW: Real Snapshot Capture State & Refs
   const [snapshots, setSnapshots] = useState([])
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
 
-  // Job Roles List
   const jobRoles = ['Software Engineer', 'Full Stack Developer', 'Data Scientist', 'DevOps Engineer', 'Product Manager', 'System Architect', 'Frontend Developer', 'Backend Developer']
   const filteredRoles = jobRoles.filter(role => role.toLowerCase().includes(roleInput.toLowerCase()))
 
-  // Keep ref updated
   useEffect(() => { interviewStartedRef.current = interviewStarted }, [interviewStarted])
 
-  // Helper: Add Log
   const addLog = (type, text) => setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), type, text }])
 
-  // Helper: Format Time
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60)
     const secs = seconds % 60
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
   }
 
-  // Text-to-Speech Function
   const speakText = (text) => {
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel()
@@ -90,7 +77,6 @@ function Interview() {
     }
   }
 
-  // Ask for a Hint Function
   const handleAskHint = () => {
     if (currentRound !== 1) { toast.error('Hints are only available during the Technical Round!'); return }
     if (hintsUsed >= 3) { toast.error('Maximum hints reached for this session.'); return }
@@ -100,7 +86,6 @@ function Interview() {
     setMessages(prev => [...prev, { role: 'ai', text: `**[HINT PROVIDED]**\nSince you asked for a clue, try breaking the problem down into smaller, manageable functions. Remember to handle edge cases! (Note: 5% score penalty applied).` }])
   }
 
-  // Toggle Microphone & Visualizer
   const toggleListening = async () => {
     if (isListening) {
       setIsListening(false)
@@ -145,6 +130,52 @@ function Interview() {
     }
   }
 
+  // NEW: Centralized function to submit interview data (handles both manual end and auto-submit)
+  const submitInterviewData = async (currentSnapshots, isAutoSubmit = false) => {
+    setIsLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      let currentSessionId = sessionId;
+
+      // Fix: If sessionId is missing, fetch the active session from backend
+      if (!currentSessionId) {
+          const res = await axios.get('http://127.0.0.1:5000/api/interviews', { 
+              headers: { 'Authorization': `Bearer ${token}` } 
+          });
+          const activeSession = res.data.data.find(s => s.status === 'in_progress');
+          if (activeSession) {
+              currentSessionId = activeSession.session_id;
+          } else {
+              toast.error("No active interview session found.");
+              setIsLoading(false);
+              return;
+          }
+      }
+      
+      // 1. Call the backend to evaluate the session AND send the real snapshots
+      await axios.post(`http://127.0.0.1:5000/api/evaluate/${currentSessionId}`, {
+        snapshots: currentSnapshots // Send the base64 images here!
+      }, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (isAutoSubmit) {
+          toast.error("Interview auto-submitted due to violations.");
+      } else {
+          toast.success("Interview evaluated successfully!");
+      }
+      
+      // 2. Navigate to the feedback page WITH the session ID
+      navigate(`/feedback/${currentSessionId}`);
+      
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to evaluate interview. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // MAIN INITIALIZATION & PROCTORING EFFECT
   useEffect(() => {
     const token = localStorage.getItem('token')
@@ -159,7 +190,6 @@ function Interview() {
       addLog('info', 'RAG Engine: Loading candidate profile context...')
     }
 
-    // 1. Request Webcam Permission & Start Real Capture
     let snapshotInterval;
     let stream;
     const initWebcam = async () => {
@@ -167,14 +197,12 @@ function Interview() {
         stream = await navigator.mediaDevices.getUserMedia({ video: true })
         setWebcamActive(true)
         
-        // Attach stream to the hidden video element so we can draw from it
         if (videoRef.current) {
           videoRef.current.srcObject = stream
         }
 
         addLog('success', 'Webcam proctoring activated. Snapshots will be taken every 10s.')
         
-        // Start the real snapshot capture interval
         snapshotInterval = setInterval(() => {
           const canvas = canvasRef.current
           const video = videoRef.current
@@ -185,26 +213,29 @@ function Interview() {
             const ctx = canvas.getContext('2d')
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
             
-            // Convert to base64 image and save to state (keep last 5)
             const dataUrl = canvas.toDataURL('image/jpeg')
             setSnapshots(prev => [dataUrl, ...prev].slice(0, 5))
             addLog('info', 'Proctoring: Real webcam snapshot captured and encrypted.')
           }
-        }, 10000) // Captures every 10 seconds for demo
+        }, 10000)
       } catch (err) {
         addLog('warning', 'Webcam access denied. Proctoring limited to tab-switch detection.')
       }
     }
     initWebcam()
 
-    // 2. Tab-Switch Detection
     const handleVisibilityChange = () => {
       if (document.hidden && interviewStartedRef.current) {
         setViolations(prev => {
           const newViolations = prev + 1
           addLog('error', `VIOLATION DETECTED: Tab switch or window minimize! (${newViolations}/3)`)
           toast.error(`⚠️ Warning: Tab switch detected! (${newViolations}/3)`)
-          if (newViolations >= 3) { toast.error('Maximum violations reached. Auto-submitting interview.'); setTimeout(() => navigate('/feedback'), 2000) }
+          
+          // FIX: If 3 violations, call submitInterviewData to save status and snapshots, then navigate
+          if (newViolations >= 3) { 
+              toast.error('Maximum violations reached. Auto-submitting interview...'); 
+              setTimeout(() => submitInterviewData(snapshots, true), 2000); 
+          }
           return newViolations
         })
       }
@@ -215,14 +246,12 @@ function Interview() {
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       if (snapshotInterval) clearInterval(snapshotInterval)
       if (stream) stream.getTracks().forEach(track => track.stop())
-      // Cleanup Audio Visualizer
       cancelAnimationFrame(animationRef.current)
       if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop())
       if (audioContextRef.current) audioContextRef.current.close()
     }
   }, [])
 
-  // NEW: Update Welcome Message if Job Role changes
   useEffect(() => {
     if (messages.length === 1 && messages[0].role === 'ai') {
       const newWelcomeMessage = `Hello! I am your AI Interviewer. Let's begin your evaluation for the **${jobRole}** role.\n\nThis interview consists of 3 rounds:\n1. **Technical Round** (15 mins)\n2. **Behavioral Round** (10 mins)\n3. **HR Round** (5 mins)\n\nThe timer will start as soon as you send your first message. To start, could you briefly introduce yourself?`;
@@ -230,17 +259,14 @@ function Interview() {
     }
   }, [jobRole]);
 
-  // Auto-scroll chat
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
-  // Reset Timer on Round Change
   useEffect(() => {
     setTimeRemaining(roundLimits[currentRound])
     setIsActive(true)
     addLog('info', `Switched to Round ${currentRound}. Time reset to ${roundLimits[currentRound] / 60} minutes.`)
   }, [currentRound])
 
-  // Timer Logic
   useEffect(() => {
     let interval = null
     if (isActive && interviewStarted && timeRemaining > 0) {
@@ -249,12 +275,11 @@ function Interview() {
       setIsActive(false)
       toast.error(`Time up for Round ${currentRound}!`)
       if (currentRound < 3) setCurrentRound(prev => prev + 1)
-      else { toast.success('Interview completed!'); setTimeout(() => navigate('/feedback'), 2000) }
+      else { toast.success('Interview completed!'); setTimeout(() => submitInterviewData(snapshots), 2000) }
     }
     return () => clearInterval(interval)
   }, [isActive, timeRemaining, currentRound, navigate, interviewStarted])
 
-  // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => { if (!event.target.closest('.role-dropdown-container')) setIsRoleDropdownOpen(false) }
     document.addEventListener('mousedown', handleClickOutside)
@@ -280,26 +305,9 @@ function Interview() {
     setTechScore(prev => Math.min(prev + Math.random() * 2 + 1, 10))
   }
 
-  const handleEndInterview = async () => {
+  const handleEndInterview = () => {
     if (!window.confirm("Are you sure you want to end the interview and generate your report?")) return;
-    
-    setIsLoading(true);
-    try {
-      const token = localStorage.getItem('token');
-      
-      await axios.post(`http://127.0.0.1:5000/api/evaluate/${sessionId}`, {}, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      
-      toast.success("Interview evaluated successfully!");
-      navigate(`/feedback/${sessionId}`);
-      
-    } catch (err) {
-      console.error(err);
-      toast.error("Failed to evaluate interview. Please try again.");
-    } finally {
-      setIsLoading(false);
-    }
+    submitInterviewData(snapshots, false);
   };
 
   const handleSend = async () => {
@@ -320,14 +328,13 @@ function Interview() {
       setMessages(prev => [...prev, { role: 'ai', text: res.data.response }])
       setTechScore(prev => Math.min(prev + Math.random() * 1.5, 10))
       setBehavScore(prev => Math.min(prev + Math.random() * 1.5, 10))
-      if (res.data.is_complete) { toast.success('Interview completed!'); setTimeout(() => navigate('/feedback'), 1500) }
+      if (res.data.is_complete) { toast.success('Interview completed!'); setTimeout(() => submitInterviewData(snapshots), 1500) }
     } catch (err) { toast.error('Failed to get AI response.'); addLog('error', 'API Error.') } 
     finally { setIsLoading(false) }
   }
 
   const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() } }
 
-  // Proctoring: Prevent Copy/Paste/Right Click
   const handleContextMenu = (e) => e.preventDefault()
   const handleCopy = (e) => { if (interviewStarted) { e.preventDefault(); toast.error('Copying is disabled during the interview!') } }
   const handlePaste = (e) => { if (interviewStarted) { e.preventDefault(); toast.error('Pasting is disabled during the interview!') } }
@@ -348,7 +355,6 @@ function Interview() {
     >
       <StarryBackground />
       
-      {/* Hidden Video & Canvas for Real Snapshot Capture */}
       <video ref={videoRef} autoPlay playsInline muted className="hidden" />
       <canvas ref={canvasRef} className="hidden" />
 
@@ -359,7 +365,6 @@ function Interview() {
 
       <div className="relative z-10 flex flex-col h-screen pt-16">
         
-        {/* Top Bar */}
         <div className="glass-card border-b border-white/20 dark:border-slate-700/50 px-6 py-3 shrink-0 relative z-30 overflow-visible">
           <div className="flex flex-wrap items-center justify-between gap-4 overflow-visible">
             <div className="flex items-center gap-4 flex-wrap">
@@ -383,7 +388,6 @@ function Interview() {
               </div>
             </div>
 
-            {/* Role Dropdown */}
             <div className="relative role-dropdown-container overflow-visible">
               <label className="text-sm font-medium text-slate-600 dark:text-slate-400 mr-2">Role:</label>
               <input type="text" value={roleInput} onChange={(e) => { setRoleInput(e.target.value); setIsRoleDropdownOpen(true) }} onFocus={() => setIsRoleDropdownOpen(true)} className="glass-input px-3 py-1.5 text-sm font-medium min-w-[200px] cursor-pointer" placeholder="Type or select role..." />
@@ -404,7 +408,6 @@ function Interview() {
           </div>
         </div>
 
-        {/* Resume Upload Section */}
         <div className="glass-card border-b border-white/20 dark:border-slate-700/50 px-6 py-2 shrink-0 relative z-10">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -428,7 +431,6 @@ function Interview() {
           </div>
         </div>
 
-        {/* Split Screen Layout */}
         <div className="flex-1 flex overflow-hidden p-4 gap-4">
           <div className="flex-1 flex flex-col gap-4 min-w-0">
             <div className="flex-1 glass-card rounded-2xl p-4 flex flex-col overflow-hidden">
@@ -460,7 +462,6 @@ function Interview() {
                 <div ref={chatEndRef} />
               </div>
 
-              {/* Input Area with Audio Visualizer */}
               <div className="mt-4 flex gap-2 items-center">
                 <button 
                   onClick={toggleListening}
@@ -519,10 +520,8 @@ function Interview() {
             )}
           </div>
 
-          {/* RIGHT PANEL: Agents, Scores, and Deliberation Stream */}
           <div className="w-80 flex flex-col gap-4 shrink-0">
             
-            {/* Active Agents Status */}
             <div className="glass-card rounded-2xl p-4 space-y-3">
               <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">Active Agents</h3>
               
@@ -549,7 +548,6 @@ function Interview() {
               </div>
             </div>
 
-            {/* NEW: Real Webcam Snapshots Preview */}
             {snapshots.length > 0 && (
               <div className="glass-card rounded-2xl p-4 space-y-2">
                 <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-2">
@@ -569,7 +567,6 @@ function Interview() {
               </div>
             )}
 
-            {/* Animated Real-Time Score Rings */}
             <div className="glass-card rounded-2xl p-5 text-center">
               <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-4">Live Evaluation</h3>
               <div className="flex justify-around">
@@ -604,7 +601,6 @@ function Interview() {
               <p className="text-[10px] text-slate-500 dark:text-slate-500 mt-4 italic">Scores update dynamically based on AI analysis.</p>
             </div>
 
-            {/* Deliberation Stream Terminal */}
             <div className="flex-1 glass-card rounded-2xl overflow-hidden flex flex-col bg-slate-900/80 border-slate-700">
               <div className="bg-slate-800/80 px-4 py-2 border-b border-slate-700 flex items-center gap-2">
                 <div className="w-2.5 h-2.5 rounded-full bg-red-500"></div>

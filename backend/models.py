@@ -63,3 +63,10 @@ class ProctoringConfig(db.Model):
     id = db.Column(db.Integer, primary_key=True, default=1)
     max_violations = db.Column(db.Integer, default=3)
     webcam_enabled = db.Column(db.Boolean, default=True)
+
+class Snapshot(db.Model):
+    __tablename__ = 'snapshots'
+    id = db.Column(db.Integer, primary_key=True)
+    session_id = db.Column(db.Integer, db.ForeignKey('interview_sessions.session_id'), nullable=False)
+    image_path = db.Column(db.String(255), nullable=False)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)

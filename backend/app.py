@@ -1,8 +1,9 @@
 import os
 import jwt
+import base64
 import datetime
 import random
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from flask_mail import Mail, Message
 from werkzeug.utils import secure_filename
@@ -11,8 +12,7 @@ from functools import wraps
 from sqlalchemy import func
 from datetime import timedelta
 from config import Config
-# UPDATED IMPORT: Added ProctoringConfig
-from models import db, User, InterviewSession, Question, Response, Feedback, Violation, ProctoringConfig
+from models import db, User, InterviewSession, Question, Response, Feedback, Violation, ProctoringConfig, Snapshot
 from agents.interviewer import get_interviewer_response
 from agents.evaluator import evaluate_interview
 from utils.resume_parser import process_resume, get_resume_context, collection
@@ -39,6 +39,8 @@ with app.app_context():
 UPLOAD_FOLDER = 'uploads'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
+if not os.path.exists(os.path.join(UPLOAD_FOLDER, 'snapshots')):
+    os.makedirs(os.path.join(UPLOAD_FOLDER, 'snapshots'))
 
 otp_store = {} 
 
@@ -74,6 +76,11 @@ def send_email(subject, recipient, body):
     except Exception as e:
         print(f"Email Error: {e}")
         return False
+
+# Route to serve uploaded snapshots
+@app.route('/uploads/snapshots/<filename>')
+def serve_snapshot(filename):
+    return send_from_directory('uploads/snapshots', filename)
 
 # ==============================================================================
 # AUTHENTICATION ROUTES
@@ -235,6 +242,7 @@ def delete_interview(current_user, session_id):
     Response.query.filter(Response.question_id.in_(db.session.query(Question.question_id).filter_by(session_id=session_id))).delete(synchronize_session='fetch')
     Question.query.filter_by(session_id=session_id).delete()
     Feedback.query.filter_by(session_id=session_id).delete()
+    Snapshot.query.filter_by(session_id=session_id).delete()
     db.session.delete(session); db.session.commit()
     return jsonify({"status": "success", "message": "Interview deleted successfully!"})
 
@@ -267,12 +275,34 @@ def get_user_stats(current_user):
         })
     except Exception as e: return jsonify({"error": str(e)}), 500
 
+# UPDATED: Evaluate route now accepts snapshots
 @app.route('/api/evaluate/<int:session_id>', methods=['POST'])
 @token_required
 def evaluate_session(current_user, session_id):
     try:
         session = db.session.get(InterviewSession, session_id)
         if not session: return jsonify({"error": "Session not found"}), 404
+        
+        # Get snapshots from request body if sent
+        data = request.get_json() or {}
+        snapshots_data = data.get('snapshots', [])
+        
+        # Save real snapshots
+        if snapshots_data:
+            os.makedirs('uploads/snapshots', exist_ok=True)
+            for i, snap_b64 in enumerate(snapshots_data):
+                try:
+                    if ',' in snap_b64:
+                        header, encoded = snap_b64.split(',', 1)
+                        binary_data = base64.b64decode(encoded)
+                        filename = f"session_{session_id}_snap_{i}.jpg"
+                        filepath = os.path.join('uploads/snapshots', filename)
+                        with open(filepath, 'wb') as f:
+                            f.write(binary_data)
+                        db.session.add(Snapshot(session_id=session_id, image_path=filepath))
+                except Exception as e:
+                    print(f"Error saving snapshot {i}: {e}")
+
         questions = Question.query.filter_by(session_id=session_id).all()
         qa_pairs = [{"question": q.question_text, "answer": Response.query.filter_by(question_id=q.question_id).first().answer_text if Response.query.filter_by(question_id=q.question_id).first() else "No answer"} for q in questions]
         if not qa_pairs: return jsonify({"error": "No questions found"}), 400
@@ -290,12 +320,17 @@ def evaluate_session(current_user, session_id):
         feedback.strengths = str(feedback_data.get("strengths", ""))
         feedback.weaknesses = str(feedback_data.get("weaknesses", ""))
         feedback.career_recommendations = str(feedback_data.get("career_recommendations", ""))
-        session.status = 'completed'; db.session.commit()
+        
+        # Mark session as completed
+        session.status = 'completed'
+        db.session.commit()
 
         user = current_user
         send_email("Your AI Interview Feedback is Ready!", user.email, f"Hi {user.name},\n\nYour interview for {session.job_role} is complete!\n\nTechnical Score: {feedback.technical_score}/10\nBehavioral Score: {feedback.behavioral_score}/10\n\nStrengths: {feedback.strengths}\n\nPlease log in to view your full report.")
         return jsonify({"status": "success", "feedback": feedback_data})
-    except Exception as e: return jsonify({"error": str(e)}), 500
+    except Exception as e: 
+        print(f"Error in evaluate: {e}")
+        return jsonify({"error": str(e)}), 500
 
 # ==============================================================================
 # ADMIN ROUTES (Protected)
@@ -498,6 +533,7 @@ def flag_violation(current_user, session_id):
         print(f"ERROR in flag_violation: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
+# UPDATED: Evidence route now fetches REAL snapshots
 @app.route('/api/admin/proctoring/<int:session_id>/evidence', methods=['GET'])
 @admin_required
 def get_proctoring_evidence(current_user, session_id):
@@ -519,17 +555,36 @@ def get_proctoring_evidence(current_user, session_id):
         violations = Violation.query.filter_by(session_id=session_id).all()
         violation_logs = [{"time": v.timestamp.strftime("%H:%M:%S"), "type": v.violation_type, "description": v.description} for v in violations]
         
+        # Fetch REAL snapshots from database
+        real_snapshots = Snapshot.query.filter_by(session_id=session_id).order_by(Snapshot.timestamp.asc()).all()
         snapshot_gallery = []
-        if session.started_at:
-            base_time = session.started_at
-            for i in range(4):
-                snap_time = base_time + datetime.timedelta(minutes=5 * (i + 1))
-                snapshot_gallery.append({
-                    "id": i + 1,
-                    "timestamp": snap_time.strftime("%H:%M:%S"),
-                    "flagged": i == 1 or i == 3,
-                    "reason": "Tab switch detected" if i == 1 else "Gaze diverted from screen" if i == 3 else "Normal"
-                })
+        
+        has_violations = len(violation_logs) > 0
+        
+        for i, snap in enumerate(real_snapshots):
+            # Simple logic: flag every other snapshot if there are violations, for demo purposes
+            is_flagged = has_violations and (i % 2 == 1)
+            snapshot_gallery.append({
+                "id": snap.id,
+                "timestamp": snap.timestamp.strftime("%H:%M:%S"),
+                "image_url": f"http://127.0.0.1:5000/{snap.image_path.replace(os.sep, '/')}",
+                "flagged": is_flagged,
+                "reason": "Flagged due to session violations" if is_flagged else "Normal"
+            })
+
+        # Fallback if no real snapshots were saved yet
+        if not snapshot_gallery:
+            if session.started_at:
+                base_time = session.started_at
+                for i in range(4):
+                    snap_time = base_time + datetime.timedelta(minutes=5 * (i + 1))
+                    snapshot_gallery.append({
+                        "id": i + 1,
+                        "timestamp": snap_time.strftime("%H:%M:%S"),
+                        "image_url": None,
+                        "flagged": i == 1 or i == 3,
+                        "reason": "Tab switch detected" if i == 1 else "Gaze diverted from screen" if i == 3 else "Normal"
+                    })
 
         return jsonify({
             "status": "success",
@@ -546,7 +601,6 @@ def get_proctoring_evidence(current_user, session_id):
         print(f"ERROR in get_proctoring_evidence: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-# NEW: Proctoring Settings Routes
 @app.route('/api/admin/settings/proctoring', methods=['GET'])
 @admin_required
 def get_proctoring_settings(current_user):
@@ -637,9 +691,6 @@ def promote_to_admin():
         return jsonify({"status": "success", "message": f"{email} is now an admin!"})
     return jsonify({"error": "User not found"}), 404
 
-# ==============================================================================
-# PROFILE SETTINGS ROUTES
-# ==============================================================================
 @app.route('/api/update-profile', methods=['POST'])
 @token_required
 def update_profile(current_user):
