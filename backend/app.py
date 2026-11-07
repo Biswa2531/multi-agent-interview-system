@@ -345,7 +345,6 @@ def get_all_interviews(current_user):
         sessions = InterviewSession.query.order_by(InterviewSession.started_at.desc()).all()
         result = []
         for session in sessions:
-            # FIXED: Use db.session.get instead of User.query.get
             user = db.session.get(User, session.user_id)
             feedback = Feedback.query.filter_by(session_id=session.session_id).first()
             question_count = Question.query.filter_by(session_id=session.session_id).count()
@@ -379,14 +378,12 @@ def get_all_interviews(current_user):
 @admin_required
 def get_interview_transcript(current_user, session_id):
     try:
-        # FIXED: Use db.session.get instead of InterviewSession.query.get
         session = db.session.get(InterviewSession, session_id)
         if not session: return jsonify({"error": "Session not found"}), 404
         
         user = db.session.get(User, session.user_id)
         feedback = Feedback.query.filter_by(session_id=session_id).first()
         
-        # Fetch Q&A History
         questions = Question.query.filter_by(session_id=session_id).order_by(Question.question_id.asc()).all()
         qa_history = []
         for q in questions:
@@ -398,7 +395,6 @@ def get_interview_transcript(current_user, session_id):
                 "difficulty": q.difficulty
             })
             
-        # Simulate Deliberation Logs & RAG Context for the UI
         deliberation_logs = [
             {"time": "14:24:55", "type": "info", "text": "RAG-Engine: Querying benchmark standards for " + session.job_role},
             {"time": "14:24:56", "type": "success", "text": "Evaluator (Chronos): Analyzing technical depth..."},
@@ -411,7 +407,7 @@ def get_interview_transcript(current_user, session_id):
         return jsonify({
             "status": "success",
             "data": {
-                 "session_id": session_id,
+                "session_id": session_id,
                 "candidate_name": user.name if user else "Unknown",
                 "candidate_email": user.email if user else "Unknown",
                 "job_role": session.job_role,
@@ -447,7 +443,6 @@ def override_score(current_user, session_id):
         if new_tech is not None: feedback.technical_score = int(new_tech)
         if new_behav is not None: feedback.behavioral_score = int(new_behav)
         
-        # ✅ SET THE OVERRIDE FLAG
         feedback.admin_override = True
         feedback.career_recommendations = f"[ADMIN OVERRIDE: {reason}] " + (feedback.career_recommendations or "")
         
@@ -457,19 +452,19 @@ def override_score(current_user, session_id):
         print(f"ERROR in override_score: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
+# ==============================================================================
+# PROCTORING ROUTES
+# ==============================================================================
 @app.route('/api/admin/proctoring', methods=['GET'])
 @admin_required
 def get_proctoring_logs(current_user):
     try:
         users = User.query.filter_by(role='candidate').all()
         report = []
-        
         for user in users:
             sessions = InterviewSession.query.filter_by(user_id=user.user_id).all()
             for session in sessions:
-                # ✅ Fetch real violation count from database
                 violation_count = Violation.query.filter_by(session_id=session.session_id).count()
-                
                 report.append({
                     "user_id": user.user_id,
                     "candidate_name": user.name,
@@ -478,13 +473,13 @@ def get_proctoring_logs(current_user):
                     "job_role": session.job_role,
                     "status": session.status,
                     "started_at": session.started_at.strftime("%d %b %Y, %I:%M %p") if session.started_at else "Unknown",
-                    "violation_count": violation_count # NEW FIELD
+                    "violation_count": violation_count
                 })
-        
         return jsonify({"status": "success", "data": report})
     except Exception as e:
+        print(f"ERROR in get_proctoring_logs: {str(e)}")
         return jsonify({"error": str(e)}), 500
-    
+
 @app.route('/api/admin/proctoring/<int:session_id>/flag', methods=['POST'])
 @admin_required
 def flag_violation(current_user, session_id):
@@ -502,6 +497,61 @@ def flag_violation(current_user, session_id):
         print(f"ERROR in flag_violation: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
+# NEW: Evidence Viewer Route
+@app.route('/api/admin/proctoring/<int:session_id>/evidence', methods=['GET'])
+@admin_required
+def get_proctoring_evidence(current_user, session_id):
+    try:
+        session = db.session.get(InterviewSession, session_id)
+        if not session: return jsonify({"error": "Session not found"}), 404
+        
+        user = db.session.get(User, session.user_id)
+        
+        # Fetch Q&A History for context
+        questions = Question.query.filter_by(session_id=session_id).order_by(Question.question_id.asc()).all()
+        qa_history = []
+        for q in questions:
+            response = Response.query.filter_by(question_id=q.question_id).first()
+            qa_history.append({
+                "question": q.question_text,
+                "answer": response.answer_text if response else "No answer provided"
+            })
+            
+        # Fetch actual violations
+        violations = Violation.query.filter_by(session_id=session_id).all()
+        violation_logs = [{"time": v.timestamp.strftime("%H:%M:%S"), "type": v.violation_type, "description": v.description} for v in violations]
+        
+        # Simulate Webcam Snapshots for the UI
+        snapshot_gallery = []
+        if session.started_at:
+            base_time = session.started_at
+            for i in range(4):
+                snap_time = base_time + datetime.timedelta(minutes=5 * (i + 1))
+                snapshot_gallery.append({
+                    "id": i + 1,
+                    "timestamp": snap_time.strftime("%H:%M:%S"),
+                    "flagged": i == 1 or i == 3,
+                    "reason": "Tab switch detected" if i == 1 else "Gaze diverted from screen" if i == 3 else "Normal"
+                })
+
+        return jsonify({
+            "status": "success",
+            "data": {
+                "candidate_name": user.name if user else "Unknown",
+                "candidate_email": user.email if user else "Unknown",
+                "job_role": session.job_role,
+                "qa_history": qa_history,
+                "violation_logs": violation_logs,
+                "snapshot_gallery": snapshot_gallery
+            }
+        })
+    except Exception as e:
+        print(f"ERROR in get_proctoring_evidence: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+# ==============================================================================
+# ADMIN USER ROUTES
+# ==============================================================================
 @app.route('/api/admin/users', methods=['GET'])
 @admin_required
 def get_all_users(current_user):
@@ -550,6 +600,9 @@ def promote_to_admin():
         return jsonify({"status": "success", "message": f"{email} is now an admin!"})
     return jsonify({"error": "User not found"}), 404
 
+# ==============================================================================
+# PROFILE SETTINGS ROUTES
+# ==============================================================================
 @app.route('/api/update-profile', methods=['POST'])
 @token_required
 def update_profile(current_user):

@@ -7,6 +7,11 @@ function AdminProctoring() {
   const [isLoading, setIsLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
   const [showFlaggedOnly, setShowFlaggedOnly] = useState(false)
+  
+  // Evidence Modal State
+  const [isEvidenceOpen, setIsEvidenceOpen] = useState(false)
+  const [evidenceData, setEvidenceData] = useState(null)
+  const [isEvidenceLoading, setIsEvidenceLoading] = useState(false)
 
   useEffect(() => { fetchLogs() }, [])
 
@@ -35,9 +40,25 @@ function AdminProctoring() {
         headers: { 'Authorization': `Bearer ${token}` }
       })
       toast.success(`Session flagged successfully!`)
-      fetchLogs() // Refresh data
+      fetchLogs()
     } catch (err) {
       toast.error('Failed to flag session')
+    }
+  }
+
+  const fetchEvidence = async (sessionId) => {
+    setIsEvidenceLoading(true)
+    setIsEvidenceOpen(true)
+    try {
+      const token = localStorage.getItem('token')
+      const res = await axios.get(`http://127.0.0.1:5000/api/admin/proctoring/${sessionId}/evidence`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      setEvidenceData(res.data.data)
+    } catch (err) {
+      toast.error('Failed to load evidence')
+    } finally {
+      setIsEvidenceLoading(false)
     }
   }
 
@@ -103,9 +124,7 @@ function AdminProctoring() {
             </thead>
             <tbody>
               {filteredLogs.length === 0 ? (
-                <tr>
-                  <td colSpan="6" className="text-center py-12 text-slate-500">No proctoring logs found</td>
-                </tr>
+                <tr><td colSpan="6" className="text-center py-12 text-slate-500">No proctoring logs found</td></tr>
               ) : (
                 filteredLogs.map((log, index) => (
                   <tr key={index} className="border-b border-slate-200 dark:border-slate-700/50 hover:bg-white/5 dark:hover:bg-slate-800/50 transition-colors">
@@ -138,12 +157,18 @@ function AdminProctoring() {
                         </div>
                       )}
                     </td>
-                    <td className="py-4 px-4">
+                    <td className="py-4 px-4 flex gap-2">
+                      <button
+                        onClick={() => fetchEvidence(log.session_id)}
+                        className="text-xs bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-400 px-3 py-1.5 rounded hover:bg-cyan-200 dark:hover:bg-cyan-900/50 transition-colors font-medium border border-cyan-200 dark:border-cyan-800"
+                      >
+                        👁️ View Evidence
+                      </button>
                       <button
                         onClick={() => handleFlag(log.session_id, log.candidate_name)}
                         className="text-xs bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 px-3 py-1.5 rounded hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors font-medium border border-red-200 dark:border-red-800"
                       >
-                        ⚠️ Flag Session
+                        ⚠️ Flag
                       </button>
                     </td>
                   </tr>
@@ -153,6 +178,116 @@ function AdminProctoring() {
           </table>
         </div>
       </div>
+
+      {/* Evidence Viewer Modal (Split-Screen) */}
+      {isEvidenceOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="glass-card rounded-2xl border border-white/20 dark:border-slate-700/50 p-6 max-w-6xl w-full bg-slate-900/95 shadow-2xl my-8">
+            {isEvidenceLoading ? (
+              <div className="text-center py-20 text-cyan-500 animate-pulse">Loading Evidence...</div>
+            ) : evidenceData && (
+              <>
+                {/* Modal Header */}
+                <div className="flex justify-between items-start mb-6 border-b border-slate-700 pb-4">
+                  <div>
+                    <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+                      📹 Security Evidence Viewer
+                    </h2>
+                    <p className="text-slate-400 mt-1">{evidenceData.candidate_name} ({evidenceData.candidate_email}) - {evidenceData.job_role}</p>
+                  </div>
+                  <button onClick={() => setIsEvidenceOpen(false)} className="text-slate-400 hover:text-white text-2xl">✕</button>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  
+                  {/* Left Column: Q&A Transcript */}
+                  <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700 flex flex-col h-[600px]">
+                    <h3 className="text-lg font-bold text-cyan-400 mb-3 flex items-center gap-2">
+                      💬 Interview Transcript
+                    </h3>
+                    <div className="flex-1 overflow-y-auto pr-2 space-y-4 custom-scrollbar">
+                      {evidenceData.qa_history.length === 0 ? (
+                        <p className="text-slate-500 text-center py-10">No transcript available.</p>
+                      ) : (
+                        evidenceData.qa_history.map((qa, idx) => (
+                          <div key={idx} className="space-y-2">
+                            <div className="bg-cyan-900/20 border-l-4 border-cyan-500 p-3 rounded-r-lg">
+                              <p className="text-[10px] text-cyan-400 font-bold mb-1">AI INTERVIEWER (Q{idx + 1})</p>
+                              <p className="text-sm text-slate-200">{qa.question}</p>
+                            </div>
+                            <div className="bg-purple-900/20 border-l-4 border-purple-500 p-3 rounded-r-lg ml-4">
+                              <p className="text-[10px] text-purple-400 font-bold mb-1">CANDIDATE RESPONSE</p>
+                              <p className="text-sm text-slate-200">{qa.answer}</p>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Right Column: Webcam Snapshots & Violations */}
+                  <div className="space-y-6 flex flex-col h-[600px]">
+                    
+                    {/* Violation Logs */}
+                    <div className="bg-black/60 rounded-xl p-4 border border-slate-700 font-mono text-xs shrink-0">
+                      <h3 className="text-lg font-bold text-red-400 mb-2 flex items-center gap-2">🚨 Violation Logs</h3>
+                      {evidenceData.violation_logs.length === 0 ? (
+                        <p className="text-emerald-400">✔ No violations recorded for this session.</p>
+                      ) : (
+                        <div className="space-y-1 max-h-32 overflow-y-auto custom-scrollbar">
+                          {evidenceData.violation_logs.map((log, idx) => (
+                            <div key={idx} className="flex gap-2">
+                              <span className="text-slate-500">[{log.time}]</span>
+                              <span className="text-red-400">{log.type}: {log.description}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Snapshot Gallery */}
+                    <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700 flex-1 overflow-y-auto custom-scrollbar">
+                      <h3 className="text-lg font-bold text-amber-400 mb-3 flex items-center gap-2">
+                        📸 Webcam Snapshot Gallery
+                      </h3>
+                      <div className="grid grid-cols-2 gap-4">
+                        {evidenceData.snapshot_gallery.map((snap) => (
+                          <div key={snap.id} className={`relative rounded-lg overflow-hidden border-2 ${snap.flagged ? 'border-red-500 shadow-lg shadow-red-500/20' : 'border-slate-600'}`}>
+                            {/* Simulated Webcam Image Placeholder */}
+                            <div className="aspect-video bg-slate-900 flex items-center justify-center relative">
+                              <div className="absolute inset-0 bg-gradient-to-br from-slate-800 to-slate-900"></div>
+                              <div className="relative z-10 text-center">
+                                <svg className="w-12 h-12 text-slate-600 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                                <span className="text-xs text-slate-500 font-mono">SNAPSHOT_{snap.id}.jpg</span>
+                              </div>
+                              
+                              {/* Flagged Badge */}
+                              {snap.flagged && (
+                                <div className="absolute top-2 right-2 bg-red-500 text-white text-[10px] font-bold px-2 py-1 rounded-full animate-pulse">
+                                  FLAGGED
+                                </div>
+                              )}
+                            </div>
+                            
+                            {/* Snapshot Metadata */}
+                            <div className="p-2 bg-slate-900/80">
+                              <p className="text-xs font-mono text-slate-400">Time: {snap.timestamp}</p>
+                              <p className={`text-xs font-bold mt-1 ${snap.flagged ? 'text-red-400' : 'text-emerald-400'}`}>
+                                Status: {snap.reason}
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
