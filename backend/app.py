@@ -463,9 +463,13 @@ def get_proctoring_logs(current_user):
     try:
         users = User.query.filter_by(role='candidate').all()
         report = []
+        
         for user in users:
             sessions = InterviewSession.query.filter_by(user_id=user.user_id).all()
             for session in sessions:
+                # ✅ Fetch real violation count from database
+                violation_count = Violation.query.filter_by(session_id=session.session_id).count()
+                
                 report.append({
                     "user_id": user.user_id,
                     "candidate_name": user.name,
@@ -473,13 +477,14 @@ def get_proctoring_logs(current_user):
                     "session_id": session.session_id,
                     "job_role": session.job_role,
                     "status": session.status,
-                    "started_at": session.started_at.strftime("%d %b %Y, %I:%M %p") if session.started_at else "Unknown"
+                    "started_at": session.started_at.strftime("%d %b %Y, %I:%M %p") if session.started_at else "Unknown",
+                    "violation_count": violation_count # NEW FIELD
                 })
+        
         return jsonify({"status": "success", "data": report})
     except Exception as e:
-        print(f"ERROR in get_proctoring_logs: {str(e)}")
         return jsonify({"error": str(e)}), 500
-
+    
 @app.route('/api/admin/proctoring/<int:session_id>/flag', methods=['POST'])
 @admin_required
 def flag_violation(current_user, session_id):

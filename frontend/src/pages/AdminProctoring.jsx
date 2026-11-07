@@ -6,6 +6,7 @@ function AdminProctoring() {
   const [logs, setLogs] = useState([])
   const [isLoading, setIsLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
+  const [showFlaggedOnly, setShowFlaggedOnly] = useState(false)
 
   useEffect(() => { fetchLogs() }, [])
 
@@ -34,15 +35,18 @@ function AdminProctoring() {
         headers: { 'Authorization': `Bearer ${token}` }
       })
       toast.success(`Session flagged successfully!`)
+      fetchLogs() // Refresh data
     } catch (err) {
       toast.error('Failed to flag session')
     }
   }
 
-  const filteredLogs = logs.filter(log => 
-    log.candidate_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    log.job_role.toLowerCase().includes(searchTerm.toLowerCase())
-  )
+  const filteredLogs = logs.filter(log => {
+    const matchesSearch = log.candidate_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          log.job_role.toLowerCase().includes(searchTerm.toLowerCase())
+    const matchesFlagFilter = showFlaggedOnly ? log.violation_count > 0 : true
+    return matchesSearch && matchesFlagFilter
+  })
 
   if (isLoading) return <div className="text-cyan-500 text-xl animate-pulse">Loading Proctoring Logs...</div>
 
@@ -62,15 +66,25 @@ function AdminProctoring() {
         </div>
       </div>
 
-      {/* Search */}
-      <div className="glass-card p-4 rounded-2xl border border-white/20 dark:border-slate-700/50">
+      {/* Search & Filters */}
+      <div className="glass-card p-4 rounded-2xl border border-white/20 dark:border-slate-700/50 flex flex-wrap gap-4 items-center">
         <input
           type="text"
           placeholder="Search by candidate name or job role..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
-          className="glass-input px-4 py-2 text-sm w-full"
+          className="glass-input px-4 py-2 text-sm flex-1 min-w-[250px]"
         />
+        <button
+          onClick={() => setShowFlaggedOnly(!showFlaggedOnly)}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all border ${
+            showFlaggedOnly 
+              ? 'bg-red-500 text-white border-red-500' 
+              : 'bg-white/5 dark:bg-slate-800/50 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:bg-white/10'
+          }`}
+        >
+          {showFlaggedOnly ? '🚩 Showing Flagged Only' : 'Show All Sessions'}
+        </button>
       </div>
 
       {/* Proctoring Table */}
@@ -113,10 +127,16 @@ function AdminProctoring() {
                       </span>
                     </td>
                     <td className="py-4 px-4">
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
-                        <span className="text-xs text-slate-600 dark:text-slate-400">0 Violations</span>
-                      </div>
+                      {log.violation_count > 0 ? (
+                        <span className="text-xs font-bold px-3 py-1 rounded-full border bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800 animate-pulse">
+                          ⚠️ {log.violation_count} Violation{log.violation_count > 1 ? 's' : ''}
+                        </span>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                          <span className="text-xs text-slate-600 dark:text-slate-400">Clean</span>
+                        </div>
+                      )}
                     </td>
                     <td className="py-4 px-4">
                       <button
