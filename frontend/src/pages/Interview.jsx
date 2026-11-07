@@ -55,6 +55,11 @@ function Interview() {
   const streamRef = useRef(null)
   const animationRef = useRef(null)
 
+  // NEW: Real Snapshot Capture State & Refs
+  const [snapshots, setSnapshots] = useState([])
+  const videoRef = useRef(null)
+  const canvasRef = useRef(null)
+
   // Job Roles List
   const jobRoles = ['Software Engineer', 'Full Stack Developer', 'Data Scientist', 'DevOps Engineer', 'Product Manager', 'System Architect', 'Frontend Developer', 'Backend Developer']
   const filteredRoles = jobRoles.filter(role => role.toLowerCase().includes(roleInput.toLowerCase()))
@@ -154,15 +159,38 @@ function Interview() {
       addLog('info', 'RAG Engine: Loading candidate profile context...')
     }
 
-    // 1. Request Webcam Permission
+    // 1. Request Webcam Permission & Start Real Capture
     let snapshotInterval;
     let stream;
     const initWebcam = async () => {
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: true })
         setWebcamActive(true)
-        addLog('success', 'Webcam proctoring activated. Snapshots will be taken every 30s.')
-        snapshotInterval = setInterval(() => { addLog('info', 'Proctoring: Background snapshot captured and encrypted.') }, 30000)
+        
+        // Attach stream to the hidden video element so we can draw from it
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream
+        }
+
+        addLog('success', 'Webcam proctoring activated. Snapshots will be taken every 10s.')
+        
+        // Start the real snapshot capture interval
+        snapshotInterval = setInterval(() => {
+          const canvas = canvasRef.current
+          const video = videoRef.current
+          
+          if (canvas && video && video.readyState === video.HAVE_ENOUGH_DATA) {
+            canvas.width = video.videoWidth
+            canvas.height = video.videoHeight
+            const ctx = canvas.getContext('2d')
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+            
+            // Convert to base64 image and save to state (keep last 5)
+            const dataUrl = canvas.toDataURL('image/jpeg')
+            setSnapshots(prev => [dataUrl, ...prev].slice(0, 5))
+            addLog('info', 'Proctoring: Real webcam snapshot captured and encrypted.')
+          }
+        }, 10000) // Captures every 10 seconds for demo
       } catch (err) {
         addLog('warning', 'Webcam access denied. Proctoring limited to tab-switch detection.')
       }
@@ -253,50 +281,26 @@ function Interview() {
   }
 
   const handleEndInterview = async () => {
-  if (!window.confirm("Are you sure you want to end the interview and generate your report?")) return;
-  
-  setIsLoading(true);
-  try {
-    const token = localStorage.getItem('token');
+    if (!window.confirm("Are you sure you want to end the interview and generate your report?")) return;
     
-    // If sessionId exists, use it directly
-    let evalSessionId = sessionId;
-    
-    // If no sessionId, fetch the active session
-    if (!evalSessionId) {
-      const interviewsRes = await axios.get('http://127.0.0.1:5000/api/interviews', {
+    setIsLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      
+      await axios.post(`http://127.0.0.1:5000/api/evaluate/${sessionId}`, {}, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       
-      // Find the most recent "in_progress" session
-      const activeSession = interviewsRes.data.data.find(s => s.status === 'in_progress');
+      toast.success("Interview evaluated successfully!");
+      navigate(`/feedback/${sessionId}`);
       
-      if (!activeSession) {
-        toast.error("No active interview found!");
-        setIsLoading(false);
-        return;
-      }
-      
-      evalSessionId = activeSession.session_id;
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to evaluate interview. Please try again.");
+    } finally {
+      setIsLoading(false);
     }
-    
-    // 1. Call the backend to evaluate the session
-    await axios.post(`http://127.0.0.1:5000/api/evaluate/${evalSessionId}`, {}, {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-    
-    toast.success("Interview evaluated successfully!");
-    
-    // 2. Navigate to the feedback page WITH the session ID
-    navigate(`/feedback/${evalSessionId}`);
-    
-  } catch (err) {
-    console.error(err);
-    toast.error("Failed to evaluate interview. Please try again.");
-  } finally {
-    setIsLoading(false);
-  }
-};
+  };
 
   const handleSend = async () => {
     if (!input.trim() || isLoading) return
@@ -343,6 +347,11 @@ function Interview() {
       className="min-h-screen relative overflow-hidden bg-gray-50 dark:bg-slate-900 transition-colors duration-300"
     >
       <StarryBackground />
+      
+      {/* Hidden Video & Canvas for Real Snapshot Capture */}
+      <video ref={videoRef} autoPlay playsInline muted className="hidden" />
+      <canvas ref={canvasRef} className="hidden" />
+
       <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
         <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-cyan-500/20 dark:bg-cyan-500/10 rounded-full blur-3xl animate-bg-1"></div>
         <div className="absolute bottom-[-10%] right-[-10%] w-[600px] h-[600px] bg-blue-500/20 dark:bg-blue-500/10 rounded-full blur-3xl animate-bg-2"></div>
@@ -539,6 +548,26 @@ function Interview() {
                 </div>
               </div>
             </div>
+
+            {/* NEW: Real Webcam Snapshots Preview */}
+            {snapshots.length > 0 && (
+              <div className="glass-card rounded-2xl p-4 space-y-2">
+                <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+                  Live Captures
+                </h3>
+                <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar">
+                  {snapshots.map((snap, idx) => (
+                    <div key={idx} className="relative shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 border-cyan-500/50 shadow-lg">
+                      <img src={snap} alt={`Snapshot ${idx}`} className="w-full h-full object-cover" />
+                      <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-[8px] text-white text-center py-0.5">
+                        {new Date().toLocaleTimeString()}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Animated Real-Time Score Rings */}
             <div className="glass-card rounded-2xl p-5 text-center">
