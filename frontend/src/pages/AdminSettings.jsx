@@ -1,19 +1,55 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import axios from 'axios'
 import toast from 'react-hot-toast'
 
 function AdminSettings() {
   const [maxViolations, setMaxViolations] = useState(3)
-  const [emailNotifications, setEmailNotifications] = useState(true)
-  const [aiDifficulty, setAiDifficulty] = useState('Medium')
+  const [webcamEnabled, setWebcamEnabled] = useState(true)
   const [adminName, setAdminName] = useState('Biswa')
   const [adminEmail, setAdminEmail] = useState('b.screation2004@gmail.com')
+  
+  // System Config State (UI only for now)
+  const [aiDifficulty, setAiDifficulty] = useState('Medium')
+  const [emailNotifications, setEmailNotifications] = useState(true)
 
-  const handleSaveSettings = () => {
-    toast.success('System settings updated successfully!')
+  useEffect(() => {
+    fetchSettings()
+  }, [])
+
+  const fetchSettings = async () => {
+    try {
+      const token = localStorage.getItem('token')
+      const res = await axios.get('http://127.0.0.1:5000/api/admin/settings/proctoring', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      setMaxViolations(res.data.data.max_violations)
+      setWebcamEnabled(res.data.data.webcam_enabled)
+    } catch (err) {
+      console.error('Failed to load settings')
+    }
+  }
+
+  const handleSaveProctoringSettings = async () => {
+    try {
+      const token = localStorage.getItem('token')
+      await axios.post('http://127.0.0.1:5000/api/admin/settings/proctoring', {
+        max_violations: maxViolations,
+        webcam_enabled: webcamEnabled
+      }, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      toast.success('Proctoring settings saved to database!')
+    } catch (err) {
+      toast.error('Failed to save settings')
+    }
   }
 
   const handleUpdateProfile = () => {
     toast.success('Admin profile updated successfully!')
+  }
+
+  const handleSaveSystemConfig = () => {
+    toast.success('System configuration updated!')
   }
 
   return (
@@ -33,21 +69,11 @@ function AdminSettings() {
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1">Full Name</label>
-              <input 
-                type="text" 
-                value={adminName} 
-                onChange={(e) => setAdminName(e.target.value)} 
-                className="glass-input w-full px-4 py-2 text-sm" 
-              />
+              <input type="text" value={adminName} onChange={(e) => setAdminName(e.target.value)} className="glass-input w-full px-4 py-2 text-sm" />
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1">Email Address</label>
-              <input 
-                type="email" 
-                value={adminEmail} 
-                onChange={(e) => setAdminEmail(e.target.value)} 
-                className="glass-input w-full px-4 py-2 text-sm" 
-              />
+              <input type="email" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} className="glass-input w-full px-4 py-2 text-sm" />
             </div>
             <button onClick={handleUpdateProfile} className="w-full bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold py-2 rounded-lg transition-all">
               Update Profile
@@ -55,7 +81,7 @@ function AdminSettings() {
           </div>
         </div>
 
-        {/* System Configuration Section */}
+        {/* System Configuration Section (RESTORED) */}
         <div className="glass-card p-6 rounded-2xl border border-white/20 dark:border-slate-700/50">
           <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
             <span className="text-purple-500">⚙️</span> System Configuration
@@ -96,13 +122,13 @@ function AdminSettings() {
               </button>
             </div>
 
-            <button onClick={handleSaveSettings} className="w-full bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-400 hover:to-pink-500 text-white font-bold py-2 rounded-lg transition-all">
+            <button onClick={handleSaveSystemConfig} className="w-full bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-400 hover:to-pink-500 text-white font-bold py-2 rounded-lg transition-all">
               Save Configuration
             </button>
           </div>
         </div>
 
-        {/* Security Rules Section */}
+        {/* Proctoring & Security Rules Section */}
         <div className="glass-card p-6 rounded-2xl border border-white/20 dark:border-slate-700/50 lg:col-span-2">
           <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
             <span className="text-red-500">🛡️</span> Proctoring & Security Rules
@@ -131,11 +157,21 @@ function AdminSettings() {
                 <p className="text-sm font-medium text-slate-800 dark:text-slate-200">Webcam Enforcement</p>
                 <p className="text-xs text-slate-500">Require camera for all interviews</p>
               </div>
-              <div className="relative w-12 h-6 rounded-full bg-emerald-500">
-                <div className="absolute top-1 left-7 w-4 h-4 bg-white rounded-full"></div>
-              </div>
+              <button 
+                onClick={() => setWebcamEnabled(!webcamEnabled)}
+                className={`relative w-12 h-6 rounded-full transition-colors ${webcamEnabled ? 'bg-emerald-500' : 'bg-slate-400'}`}
+              >
+                <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${webcamEnabled ? 'left-7' : 'left-1'}`}></div>
+              </button>
             </div>
           </div>
+          
+          <button 
+            onClick={handleSaveProctoringSettings} 
+            className="w-full mt-6 bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-400 hover:to-pink-500 text-white font-bold py-2 rounded-lg transition-all"
+          >
+            Save Proctoring Configuration
+          </button>
         </div>
 
       </div>

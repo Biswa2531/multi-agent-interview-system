@@ -57,3 +57,9 @@ class Violation(db.Model):
     violation_type = db.Column(db.String(50), nullable=False)  # e.g., 'Tab Switch', 'Webcam Off'
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
     description = db.Column(db.Text)
+
+class ProctoringConfig(db.Model):
+    __tablename__ = 'proctoring_config'
+    id = db.Column(db.Integer, primary_key=True, default=1)
+    max_violations = db.Column(db.Integer, default=3)
+    webcam_enabled = db.Column(db.Boolean, default=True)

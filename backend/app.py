@@ -11,7 +11,8 @@ from functools import wraps
 from sqlalchemy import func
 from datetime import timedelta
 from config import Config
-from models import db, User, InterviewSession, Question, Response, Feedback, Violation
+# UPDATED IMPORT: Added ProctoringConfig
+from models import db, User, InterviewSession, Question, Response, Feedback, Violation, ProctoringConfig
 from agents.interviewer import get_interviewer_response
 from agents.evaluator import evaluate_interview
 from utils.resume_parser import process_resume, get_resume_context, collection
@@ -453,7 +454,7 @@ def override_score(current_user, session_id):
         return jsonify({"error": str(e)}), 500
 
 # ==============================================================================
-# PROCTORING ROUTES
+# PROCTORING & SETTINGS ROUTES
 # ==============================================================================
 @app.route('/api/admin/proctoring', methods=['GET'])
 @admin_required
@@ -497,7 +498,6 @@ def flag_violation(current_user, session_id):
         print(f"ERROR in flag_violation: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-# NEW: Evidence Viewer Route
 @app.route('/api/admin/proctoring/<int:session_id>/evidence', methods=['GET'])
 @admin_required
 def get_proctoring_evidence(current_user, session_id):
@@ -507,7 +507,6 @@ def get_proctoring_evidence(current_user, session_id):
         
         user = db.session.get(User, session.user_id)
         
-        # Fetch Q&A History for context
         questions = Question.query.filter_by(session_id=session_id).order_by(Question.question_id.asc()).all()
         qa_history = []
         for q in questions:
@@ -517,11 +516,9 @@ def get_proctoring_evidence(current_user, session_id):
                 "answer": response.answer_text if response else "No answer provided"
             })
             
-        # Fetch actual violations
         violations = Violation.query.filter_by(session_id=session_id).all()
         violation_logs = [{"time": v.timestamp.strftime("%H:%M:%S"), "type": v.violation_type, "description": v.description} for v in violations]
         
-        # Simulate Webcam Snapshots for the UI
         snapshot_gallery = []
         if session.started_at:
             base_time = session.started_at
@@ -547,6 +544,46 @@ def get_proctoring_evidence(current_user, session_id):
         })
     except Exception as e:
         print(f"ERROR in get_proctoring_evidence: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+# NEW: Proctoring Settings Routes
+@app.route('/api/admin/settings/proctoring', methods=['GET'])
+@admin_required
+def get_proctoring_settings(current_user):
+    try:
+        config = ProctoringConfig.query.get(1)
+        if not config:
+            config = ProctoringConfig(id=1, max_violations=3, webcam_enabled=True)
+            db.session.add(config)
+            db.session.commit()
+            
+        return jsonify({
+            "status": "success",
+            "data": {
+                "max_violations": config.max_violations,
+                "webcam_enabled": config.webcam_enabled
+            }
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/admin/settings/proctoring', methods=['POST'])
+@admin_required
+def update_proctoring_settings(current_user):
+    try:
+        data = request.get_json()
+        config = ProctoringConfig.query.get(1)
+        
+        if not config:
+            config = ProctoringConfig(id=1)
+            db.session.add(config)
+            
+        config.max_violations = int(data.get('max_violations', 3))
+        config.webcam_enabled = bool(data.get('webcam_enabled', True))
+        
+        db.session.commit()
+        return jsonify({"status": "success", "message": "Settings updated successfully!"})
+    except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 # ==============================================================================
