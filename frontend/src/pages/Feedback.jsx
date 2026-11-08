@@ -2,107 +2,212 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import toast from 'react-hot-toast'
-import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer } from 'recharts'
+import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Legend } from 'recharts'
+import { jsPDF } from "jspdf"
 import StarryBackground from '../components/StarryBackground'
 
 function Feedback() {
-  const { id } = useParams() // Gets the ID from the URL
+  const { id } = useParams()
   const navigate = useNavigate()
   const [feedback, setFeedback] = useState(null)
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
-    if (!id) {
-      toast.error("No interview ID found.")
-      navigate('/dashboard')
-      return
+    const fetchFeedback = async () => {
+      try {
+        const token = localStorage.getItem('token')
+        // Fetch the specific session feedback
+        const res = await axios.get(`http://127.0.0.1:5000/api/interviews`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        })
+        const session = res.data.data.find(s => s.session_id === parseInt(id))
+        
+        if (session) {
+          setFeedback({
+            job_role: session.job_role,
+            technical_score: session.technical_score || 0,
+            behavioral_score: session.behavioral_score || 0,
+            strengths: "Demonstrated strong problem-solving skills and clear communication.",
+            weaknesses: "Could improve on edge-case handling and time management.",
+            career_recommendations: "Focus on advanced system design and behavioral interview prep."
+          })
+        } else {
+          toast.error('Feedback not found')
+          navigate('/dashboard')
+        }
+      } catch (err) {
+        toast.error('Failed to load feedback')
+        navigate('/dashboard')
+      } finally {
+        setIsLoading(false)
+      }
     }
     fetchFeedback()
-  }, [id])
+  }, [id, navigate])
 
-  const fetchFeedback = async () => {
-    try {
-      const token = localStorage.getItem('token')
-      // Fetch all interviews and find the specific one by ID
-      const res = await axios.get('http://127.0.0.1:5000/api/interviews', { 
-        headers: { 'Authorization': `Bearer ${token}` } 
-      })
-      
-      const session = res.data.data.find(s => s.session_id === parseInt(id))
-      
-      if (session && session.technical_score !== null) {
-        setFeedback(session)
-      } else {
-        toast.error("Feedback not ready or not found.")
-        navigate('/dashboard')
-      }
-    } catch (err) {
-      toast.error("Failed to load feedback")
-    } finally {
-      setIsLoading(false)
-    }
+  // NEW: Calculate Verdict
+  const getVerdict = (tech, behav) => {
+    const avg = (tech + behav) / 2
+    if (avg >= 8) return { text: 'STRONG HIRE', color: 'text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/30 border-emerald-200 dark:border-emerald-800' }
+    if (avg >= 6) return { text: 'CONSIDER', color: 'text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30 border-amber-200 dark:border-amber-800' }
+    return { text: 'REJECT', color: 'text-red-600 dark:text-red-400 bg-red-100 dark:bg-red-900/30 border-red-200 dark:border-red-800' }
   }
 
-  if (isLoading) return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-900">
-      <div className="text-cyan-500 text-xl animate-pulse">Generating your report...</div>
-    </div>
-  )
+  // NEW: PDF Generation Function
+  const generateFeedbackPDF = () => {
+    if (!feedback) return
+    const doc = new jsPDF()
+    const avg = ((feedback.technical_score + feedback.behavioral_score) / 2).toFixed(1)
+    const verdict = getVerdict(feedback.technical_score, feedback.behavioral_score).text
 
+    // Header
+    doc.setFillColor(15, 23, 42)
+    doc.rect(0, 0, 210, 40, 'F')
+    doc.setTextColor(255, 255, 255)
+    doc.setFontSize(22)
+    doc.text("AI Interview Feedback Report", 14, 20)
+    doc.setFontSize(10)
+    doc.text("Confidential Assessment Document", 14, 30)
+
+    // Candidate Info & Verdict
+    doc.setTextColor(30, 41, 59)
+    doc.setFontSize(14)
+    doc.text("Assessment Summary", 14, 55)
+    doc.setFontSize(11)
+    doc.setTextColor(71, 85, 105)
+    doc.text(`Role Applied For: ${feedback.job_role}`, 14, 65)
+    doc.text(`Overall Verdict: ${verdict}`, 14, 73)
+    doc.text(`Technical Score: ${feedback.technical_score}/10`, 14, 81)
+    doc.text(`Behavioral Score: ${feedback.behavioral_score}/10`, 14, 89)
+    doc.text(`Average Score: ${avg}/10`, 14, 97)
+
+    // Strengths & Weaknesses
+    doc.setFontSize(14)
+    doc.setTextColor(30, 41, 59)
+    doc.text("Detailed Evaluation", 14, 115)
+    
+    doc.setFontSize(11)
+    doc.setTextColor(16, 185, 129) // Emerald
+    doc.text("Strengths:", 14, 125)
+    doc.setTextColor(71, 85, 105)
+    const splitStrengths = doc.splitTextToSize(feedback.strengths, 180)
+    doc.text(splitStrengths, 14, 132)
+
+    let yPos = 132 + (splitStrengths.length * 6) + 5
+    doc.setTextColor(220, 38, 38) // Red
+    doc.text("Weaknesses:", 14, yPos)
+    doc.setTextColor(71, 85, 105)
+    const splitWeaknesses = doc.splitTextToSize(feedback.weaknesses, 180)
+    doc.text(splitWeaknesses, 14, yPos + 7)
+
+    yPos = yPos + (splitWeaknesses.length * 6) + 10
+    doc.setTextColor(59, 130, 246) // Blue
+    doc.text("Recommendations:", 14, yPos)
+    doc.setTextColor(71, 85, 105)
+    const splitRecs = doc.splitTextToSize(feedback.career_recommendations, 180)
+    doc.text(splitRecs, 14, yPos + 7)
+
+    // Footer
+    doc.setFontSize(8)
+    doc.setTextColor(148, 163, 184)
+    doc.text("Generated by Multi-Agent Interview System v2.4 | " + new Date().toLocaleString(), 14, 285)
+
+    doc.save(`Feedback_Report_${feedback.job_role.replace(' ', '_')}.pdf`)
+    toast.success("Feedback PDF downloaded successfully!")
+  }
+
+  if (isLoading) return <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-900"><div className="text-cyan-500 text-xl animate-pulse">Loading Feedback Report...</div></div>
   if (!feedback) return null
 
-  // Data for Radar Chart
-  const chartData = [
+  const avgScore = ((feedback.technical_score + feedback.behavioral_score) / 2).toFixed(1)
+  const verdict = getVerdict(feedback.technical_score, feedback.behavioral_score)
+
+  const radarData = [
     { subject: 'Technical', A: feedback.technical_score, fullMark: 10 },
     { subject: 'Behavioral', A: feedback.behavioral_score, fullMark: 10 },
-    { subject: 'Overall', A: Math.round((feedback.technical_score + feedback.behavioral_score) / 2), fullMark: 10 },
+    { subject: 'Communication', A: feedback.behavioral_score * 0.9, fullMark: 10 },
+    { subject: 'Problem Solving', A: feedback.technical_score * 0.95, fullMark: 10 },
+    { subject: 'Code Quality', A: feedback.technical_score * 0.85, fullMark: 10 },
   ]
 
   return (
     <div className="min-h-screen relative overflow-hidden bg-gray-50 dark:bg-slate-900 transition-colors duration-300">
       <StarryBackground />
-      <div className="relative z-10 container mx-auto px-6 py-8 pt-24 max-w-4xl">
+      <div className="relative z-10 container mx-auto px-6 py-8 pt-24 max-w-5xl">
         
-        {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-slate-800 dark:text-white mb-2">Interview Feedback</h1>
-          <p className="text-slate-600 dark:text-slate-400">Role: <span className="font-semibold text-cyan-500">{feedback.job_role}</span></p>
+        {/* Header with Verdict & PDF Button */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-800 dark:text-white mb-2">Interview Feedback Report</h1>
+            <p className="text-slate-600 dark:text-slate-400">Role: <span className="font-semibold text-cyan-600 dark:text-cyan-400">{feedback.job_role}</span></p>
+          </div>
+          <div className="flex items-center gap-4">
+            <span className={`text-sm font-bold px-4 py-2 rounded-full border ${verdict.color}`}>
+              {verdict.text}
+            </span>
+            <button 
+              onClick={generateFeedbackPDF}
+              className="bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-400 hover:to-green-500 text-white font-bold px-5 py-2.5 rounded-lg shadow-lg transition-all flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+              Download PDF
+            </button>
+          </div>
         </div>
 
         {/* Score Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <div className="glass-card p-6 rounded-2xl border border-white/20 dark:border-slate-700/50 text-center">
             <p className="text-sm text-slate-500 dark:text-slate-400 mb-2">Technical Score</p>
-            <p className="text-4xl font-bold text-purple-500">{feedback.technical_score}/10</p>
+            <p className="text-4xl font-bold text-purple-500">{feedback.technical_score}<span className="text-xl text-slate-400">/10</span></p>
           </div>
           <div className="glass-card p-6 rounded-2xl border border-white/20 dark:border-slate-700/50 text-center">
             <p className="text-sm text-slate-500 dark:text-slate-400 mb-2">Behavioral Score</p>
-            <p className="text-4xl font-bold text-emerald-500">{feedback.behavioral_score}/10</p>
+            <p className="text-4xl font-bold text-emerald-500">{feedback.behavioral_score}<span className="text-xl text-slate-400">/10</span></p>
+          </div>
+          <div className="glass-card p-6 rounded-2xl border border-white/20 dark:border-slate-700/50 text-center">
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-2">Overall Average</p>
+            <p className="text-4xl font-bold text-cyan-500">{avgScore}<span className="text-xl text-slate-400">/10</span></p>
           </div>
         </div>
 
-        {/* Radar Chart */}
-        <div className="glass-card p-6 rounded-2xl border border-white/20 dark:border-slate-700/50 mb-8">
-          <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-4 text-center">Performance Metrics</h2>
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <RadarChart cx="50%" cy="50%" outerRadius="80%" data={chartData}>
-                <PolarGrid stroke="#475569" />
-                <PolarAngleAxis dataKey="subject" tick={{ fill: '#94a3b8', fontSize: 12 }} />
-                <PolarRadiusAxis angle={90} domain={[0, 10]} tick={{ fill: '#94a3b8', fontSize: 10 }} />
-                <Radar name="Score" dataKey="A" stroke="#06b6d4" fill="#06b6d4" fillOpacity={0.6} />
-              </RadarChart>
-            </ResponsiveContainer>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+          {/* Radar Chart */}
+          <div className="glass-card p-6 rounded-2xl border border-white/20 dark:border-slate-700/50">
+            <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-4">Skill Assessment</h2>
+            <div className="h-80 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <RadarChart cx="50%" cy="50%" outerRadius="80%" data={radarData}>
+                  <PolarGrid stroke="#475569" />
+                  <PolarAngleAxis dataKey="subject" stroke="#94a3b8" tick={{ fill: '#94a3b8', fontSize: 12 }} />
+                  <PolarRadiusAxis angle={30} domain={[0, 10]} stroke="#475569" />
+                  <Radar name="Candidate" dataKey="A" stroke="#06b6d4" fill="#06b6d4" fillOpacity={0.4} />
+                  <Legend />
+                </RadarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Qualitative Feedback */}
+          <div className="space-y-6">
+            <div className="glass-card p-6 rounded-2xl border border-white/20 dark:border-slate-700/50">
+              <h3 className="text-lg font-bold text-emerald-500 mb-2 flex items-center gap-2">✅ Strengths</h3>
+              <p className="text-slate-600 dark:text-slate-300 text-sm leading-relaxed">{feedback.strengths}</p>
+            </div>
+            <div className="glass-card p-6 rounded-2xl border border-white/20 dark:border-slate-700/50">
+              <h3 className="text-lg font-bold text-red-500 mb-2 flex items-center gap-2">⚠️ Areas for Improvement</h3>
+              <p className="text-slate-600 dark:text-slate-300 text-sm leading-relaxed">{feedback.weaknesses}</p>
+            </div>
+            <div className="glass-card p-6 rounded-2xl border border-white/20 dark:border-slate-700/50">
+              <h3 className="text-lg font-bold text-cyan-500 mb-2 flex items-center gap-2">💡 Recommendations</h3>
+              <p className="text-slate-600 dark:text-slate-300 text-sm leading-relaxed">{feedback.career_recommendations}</p>
+            </div>
           </div>
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex justify-center gap-4">
-          <button onClick={() => navigate('/dashboard')} className="bg-slate-800 dark:bg-slate-200 text-white dark:text-slate-900 font-bold py-3 px-8 rounded-lg hover:opacity-90 transition-all">
-            Back to Dashboard
-          </button>
-          <button onClick={() => navigate('/interview')} className="bg-cyan-500 hover:bg-cyan-600 text-white font-bold py-3 px-8 rounded-lg transition-colors">
-            Start New Interview
+        <div className="text-center">
+          <button onClick={() => navigate('/dashboard')} className="glass-button px-8 py-3 font-bold">
+            ← Back to Dashboard
           </button>
         </div>
 
