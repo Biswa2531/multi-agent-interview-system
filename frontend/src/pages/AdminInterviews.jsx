@@ -9,6 +9,9 @@ function AdminInterviews() {
   const [filterStatus, setFilterStatus] = useState('all')
   const [searchTerm, setSearchTerm] = useState('')
   
+  // NEW: Sorting State
+  const [sortConfig, setSortConfig] = useState({ key: 'started_at', direction: 'desc' })
+
   // Deep Dive Modal State
   const [isTranscriptOpen, setIsTranscriptOpen] = useState(false)
   const [transcriptData, setTranscriptData] = useState(null)
@@ -35,6 +38,25 @@ function AdminInterviews() {
     }
   }
 
+  // NEW: Sorting Logic
+  const requestSort = (key) => {
+    let direction = 'asc'
+    if (sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc'
+    }
+    setSortConfig({ key, direction })
+  }
+
+  const getSortedInterviews = () => {
+    let sortableInterviews = [...interviews]
+    sortableInterviews.sort((a, b) => {
+      if (a[sortConfig.key] < b[sortConfig.key]) return sortConfig.direction === 'asc' ? -1 : 1
+      if (a[sortConfig.key] > b[sortConfig.key]) return sortConfig.direction === 'asc' ? 1 : -1
+      return 0
+    })
+    return sortableInterviews
+  }
+
   const fetchTranscript = async (sessionId) => {
     setIsTranscriptLoading(true)
     setIsTranscriptOpen(true)
@@ -58,7 +80,7 @@ function AdminInterviews() {
     if (!transcriptData) return
     try {
       const token = localStorage.getItem('token')
-      await axios.post(`http://127.0.0.1:5000/api/admin/interviews/${transcriptData.session_id || transcriptData.candidate_email}/override-score`, {
+      await axios.post(`http://127.0.0.1:5000/api/admin/interviews/${transcriptData.session_id}/override-score`, {
         technical_score: newTechScore,
         behavioral_score: newBehavScore,
         reason: overrideReason
@@ -73,7 +95,7 @@ function AdminInterviews() {
     }
   }
 
-  const filteredInterviews = interviews.filter(interview => {
+  const filteredInterviews = getSortedInterviews().filter(interview => {
     const matchesRole = filterRole === 'all' || interview.job_role === filterRole
     const matchesStatus = filterStatus === 'all' || interview.status === filterStatus
     const matchesSearch = interview.candidate_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -121,10 +143,33 @@ function AdminInterviews() {
               <tr>
                 <th className="text-left py-4 px-4 text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase">Candidate</th>
                 <th className="text-left py-4 px-4 text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase">Role</th>
-                <th className="text-left py-4 px-4 text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase">Date</th>
+                
+                {/* Sortable Date Header */}
+                <th 
+                  className="text-left py-4 px-4 text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase cursor-pointer hover:text-cyan-500 transition-colors select-none"
+                  onClick={() => requestSort('started_at')}
+                >
+                  Date {sortConfig.key === 'started_at' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}
+                </th>
+                
                 <th className="text-left py-4 px-4 text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase">Status</th>
-                <th className="text-left py-4 px-4 text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase">Tech Score</th>
-                <th className="text-left py-4 px-4 text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase">Behav Score</th>
+                
+                {/* Sortable Tech Score Header */}
+                <th 
+                  className="text-left py-4 px-4 text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase cursor-pointer hover:text-cyan-500 transition-colors select-none"
+                  onClick={() => requestSort('technical_score')}
+                >
+                  Tech Score {sortConfig.key === 'technical_score' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}
+                </th>
+                
+                {/* Sortable Behav Score Header */}
+                <th 
+                  className="text-left py-4 px-4 text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase cursor-pointer hover:text-cyan-500 transition-colors select-none"
+                  onClick={() => requestSort('behavioral_score')}
+                >
+                  Behav Score {sortConfig.key === 'behavioral_score' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}
+                </th>
+                
                 <th className="text-left py-4 px-4 text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase">Actions</th>
               </tr>
             </thead>
@@ -184,7 +229,6 @@ function AdminInterviews() {
               <div className="text-center py-20 text-cyan-500 animate-pulse">Loading Deep-Dive Transcript...</div>
             ) : transcriptData && (
               <>
-                {/* Header */}
                 <div className="flex justify-between items-start mb-6 border-b border-slate-700 pb-4">
                   <div>
                     <h2 className="text-2xl font-bold text-white flex items-center gap-2">
@@ -197,20 +241,18 @@ function AdminInterviews() {
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                  {/* Left Column: Q&A and Logs */}
                   <div className="lg:col-span-2 space-y-6">
-                    {/* Q&A History */}
                     <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700">
                       <h3 className="text-lg font-bold text-cyan-400 mb-3">💬 Full Q&A History</h3>
                       <div className="space-y-4 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
                         {transcriptData.qa_history.map((qa, idx) => (
                           <div key={idx} className="space-y-2">
                             <div className="bg-cyan-900/20 border-l-4 border-cyan-500 p-3 rounded-r-lg">
-                              <p className="text-xs text-cyan-400 font-bold mb-1">AI INTERVIEWER (Q{idx + 1})</p>
+                              <p className="text-[10px] text-cyan-400 font-bold mb-1">AI INTERVIEWER (Q{idx + 1})</p>
                               <p className="text-sm text-slate-200">{qa.question}</p>
                             </div>
                             <div className="bg-purple-900/20 border-l-4 border-purple-500 p-3 rounded-r-lg ml-4">
-                              <p className="text-xs text-purple-400 font-bold mb-1">CANDIDATE RESPONSE</p>
+                              <p className="text-[10px] text-purple-400 font-bold mb-1">CANDIDATE RESPONSE</p>
                               <p className="text-sm text-slate-200">{qa.answer}</p>
                             </div>
                           </div>
@@ -218,7 +260,6 @@ function AdminInterviews() {
                       </div>
                     </div>
 
-                    {/* Deliberation Stream */}
                     <div className="bg-black/60 rounded-xl p-4 border border-slate-700 font-mono text-xs">
                       <h3 className="text-lg font-bold text-emerald-400 mb-3">🤖 Agent Deliberation Stream</h3>
                       <div className="space-y-1">
@@ -234,9 +275,7 @@ function AdminInterviews() {
                     </div>
                   </div>
 
-                  {/* Right Column: Scores, RAG, Override */}
                   <div className="space-y-6">
-                    {/* AI Scoring Breakdown */}
                     <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700">
                       <h3 className="text-lg font-bold text-purple-400 mb-3">📊 AI Scoring Breakdown</h3>
                       <div className="grid grid-cols-2 gap-4 mb-4">
@@ -255,13 +294,11 @@ function AdminInterviews() {
                       </div>
                     </div>
 
-                    {/* RAG Context */}
                     <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700">
                       <h3 className="text-lg font-bold text-amber-400 mb-2">🧠 RAG Context Used</h3>
                       <p className="text-xs text-slate-300 italic bg-black/30 p-2 rounded">{transcriptData.rag_context}</p>
                     </div>
 
-                    {/* Override Grading Form */}
                     <div className="bg-gradient-to-br from-amber-900/20 to-orange-900/20 rounded-xl p-4 border border-amber-500/30">
                       <h3 className="text-lg font-bold text-amber-400 mb-3">⚡ Override Grading</h3>
                       <div className="space-y-3">
