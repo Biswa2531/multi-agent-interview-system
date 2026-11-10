@@ -3,6 +3,7 @@ import jwt
 import base64
 import datetime
 import random
+import io
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from flask_mail import Mail, Message
@@ -16,6 +17,7 @@ from models import db, User, InterviewSession, Question, Response, Feedback, Vio
 from agents.interviewer import get_interviewer_response
 from agents.evaluator import evaluate_interview
 from utils.resume_parser import process_resume, get_resume_context, collection
+from fpdf import FPDF
 
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -67,10 +69,16 @@ def admin_required(f):
         return f(current_user, *args, **kwargs)
     return decorated
 
-def send_email(subject, recipient, body):
+# UPDATED: Professional Email Sender with Attachment Support
+def send_email(subject, recipient, body, attachment_data=None, attachment_name=None):
     try:
-        msg = Message(subject, sender=app.config['MAIL_USERNAME'], recipients=[recipient])
+        sender_name = f"Multi-Agent Interview System <{app.config['MAIL_USERNAME']}>"
+        msg = Message(subject, sender=sender_name, recipients=[recipient])
         msg.body = body
+        
+        if attachment_data:
+            msg.attach(attachment_name, "application/pdf", attachment_data)
+            
         mail.send(msg)
         return True
     except Exception as e:
@@ -275,7 +283,7 @@ def get_user_stats(current_user):
         })
     except Exception as e: return jsonify({"error": str(e)}), 500
 
-# UPDATED: Evaluate route now accepts snapshots
+# UPDATED: Evaluate route now generates and attaches PDF to email
 @app.route('/api/evaluate/<int:session_id>', methods=['POST'])
 @token_required
 def evaluate_session(current_user, session_id):
@@ -283,11 +291,9 @@ def evaluate_session(current_user, session_id):
         session = db.session.get(InterviewSession, session_id)
         if not session: return jsonify({"error": "Session not found"}), 404
         
-        # Get snapshots from request body if sent
         data = request.get_json() or {}
         snapshots_data = data.get('snapshots', [])
         
-        # Save real snapshots
         if snapshots_data:
             os.makedirs('uploads/snapshots', exist_ok=True)
             for i, snap_b64 in enumerate(snapshots_data):
@@ -321,12 +327,62 @@ def evaluate_session(current_user, session_id):
         feedback.weaknesses = str(feedback_data.get("weaknesses", ""))
         feedback.career_recommendations = str(feedback_data.get("career_recommendations", ""))
         
-        # Mark session as completed
         session.status = 'completed'
         db.session.commit()
 
         user = current_user
-        send_email("Your AI Interview Feedback is Ready!", user.email, f"Hi {user.name},\n\nYour interview for {session.job_role} is complete!\n\nTechnical Score: {feedback.technical_score}/10\nBehavioral Score: {feedback.behavioral_score}/10\n\nStrengths: {feedback.strengths}\n\nPlease log in to view your full report.")
+        
+        # --- Generate PDF for Email Attachment ---
+        try:
+            pdf = FPDF()
+            pdf.add_page()
+            pdf.set_font("Arial", 'B', 16)
+            pdf.cell(0, 10, "Interview Feedback Report", ln=True, align='C')
+            pdf.ln(10)
+            
+            pdf.set_font("Arial", size=12)
+            pdf.cell(0, 10, f"Role: {session.job_role}", ln=True)
+            pdf.cell(0, 10, f"Technical Score: {feedback.technical_score}/10", ln=True)
+            pdf.cell(0, 10, f"Behavioral Score: {feedback.behavioral_score}/10", ln=True)
+            pdf.ln(5)
+            
+            pdf.set_font("Arial", 'B', 12)
+            pdf.cell(0, 10, "Strengths:", ln=True)
+            pdf.set_font("Arial", size=11)
+            pdf.multi_cell(0, 10, feedback.strengths)
+            
+            pdf.set_font("Arial", 'B', 12)
+            pdf.cell(0, 10, "Weaknesses:", ln=True)
+            pdf.set_font("Arial", size=11)
+            pdf.multi_cell(0, 10, feedback.weaknesses)
+            
+            pdf_data = pdf.output(dest='S').encode('latin-1')
+        except Exception as e:
+            print(f"PDF Generation Error: {e}")
+            pdf_data = None
+
+        # --- Send Professional Email with Attachment ---
+        email_body = f"""Hi {user.name},
+
+Your interview for {session.job_role} is complete!
+
+Technical Score: {feedback.technical_score}/10
+Behavioral Score: {feedback.behavioral_score}/10
+
+Please find your detailed Feedback Report attached to this email.
+You can also log in to view your full interactive dashboard.
+
+Best regards,
+Multi-Agent Interview System Team
+"""
+        send_email(
+            "Your AI Interview Feedback is Ready!", 
+            user.email, 
+            email_body, 
+            attachment_data=pdf_data, 
+            attachment_name=f"Feedback_{session.job_role.replace(' ', '_')}.pdf"
+        )
+        
         return jsonify({"status": "success", "feedback": feedback_data})
     except Exception as e: 
         print(f"Error in evaluate: {e}")
@@ -533,7 +589,6 @@ def flag_violation(current_user, session_id):
         print(f"ERROR in flag_violation: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-# UPDATED: Evidence route now fetches REAL snapshots
 @app.route('/api/admin/proctoring/<int:session_id>/evidence', methods=['GET'])
 @admin_required
 def get_proctoring_evidence(current_user, session_id):
@@ -555,14 +610,12 @@ def get_proctoring_evidence(current_user, session_id):
         violations = Violation.query.filter_by(session_id=session_id).all()
         violation_logs = [{"time": v.timestamp.strftime("%H:%M:%S"), "type": v.violation_type, "description": v.description} for v in violations]
         
-        # Fetch REAL snapshots from database
         real_snapshots = Snapshot.query.filter_by(session_id=session_id).order_by(Snapshot.timestamp.asc()).all()
         snapshot_gallery = []
         
         has_violations = len(violation_logs) > 0
         
         for i, snap in enumerate(real_snapshots):
-            # Simple logic: flag every other snapshot if there are violations, for demo purposes
             is_flagged = has_violations and (i % 2 == 1)
             snapshot_gallery.append({
                 "id": snap.id,
@@ -572,7 +625,6 @@ def get_proctoring_evidence(current_user, session_id):
                 "reason": "Flagged due to session violations" if is_flagged else "Normal"
             })
 
-        # Fallback if no real snapshots were saved yet
         if not snapshot_gallery:
             if session.started_at:
                 base_time = session.started_at
