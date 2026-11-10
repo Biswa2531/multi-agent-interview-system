@@ -88,7 +88,7 @@ MAIL_USE_TLS=True
 MAIL_USERNAME=your_email@gmail.com
 MAIL_PASSWORD=your_app_password
 CHROMA_HOST=localhost
-CHROMA_PORT=8000```
+CHROMA_PORT=8000
 
 ```bash
 # Initialize the database and run the server
