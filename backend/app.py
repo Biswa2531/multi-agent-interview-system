@@ -137,7 +137,7 @@ def signup():
             return jsonify({"error": "Email already registered"}), 400
         
         otp_code = str(random.randint(100000, 999999))
-        expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=5)
+        expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=5)
         
         db.session.add(OTPCode(
             email=email, code_hash=generate_otp_hash(otp_code), type='signup',
@@ -160,13 +160,13 @@ def verify_signup_otp():
             return jsonify({"error": "Missing required fields"}), 400
             
         email = data['email'].strip().lower()
-        otp = data['otp']
+        otp = data['otp'].replace(' ', '').strip()
         
         otp_record = OTPCode.query.filter_by(email=email, type='signup').order_by(OTPCode.created_at.desc()).first()
         
         if not otp_record: return jsonify({"error": "No OTP requested"}), 400
         if otp_record.attempts >= 5: return jsonify({"error": "Max attempts reached"}), 429
-        if datetime.datetime.now(datetime.timezone.utc) > otp_record.expires_at: return jsonify({"error": "OTP expired"}), 400
+        if datetime.datetime.utcnow() > otp_record.expires_at: return jsonify({"error": "OTP expired"}), 400
         if otp_record.code_hash != generate_otp_hash(otp):
             otp_record.attempts += 1; db.session.commit()
             return jsonify({"error": "Invalid OTP"}), 400
@@ -198,7 +198,7 @@ def login():
         if not check_password_hash(user.password_hash, password): return jsonify({"error": "Invalid password"}), 401
 
         otp_code = str(random.randint(100000, 999999))
-        expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=5)
+        expires_at =datetime.datetime.utcnow() + datetime.timedelta(minutes=5)
         
         db.session.add(OTPCode(
             email=email, code_hash=generate_otp_hash(otp_code), type='login',
@@ -224,11 +224,11 @@ def verify_login_otp():
             return jsonify({"error": "Missing required fields"}), 400
             
         email = data['email'].strip().lower()
-        otp = data['otp']
+        otp = data['otp'].replace(' ', '').strip()
         
         otp_record = OTPCode.query.filter_by(email=email, type='login').order_by(OTPCode.created_at.desc()).first()
         
-        if not otp_record or otp_record.attempts >= 5 or datetime.datetime.now(datetime.timezone.utc) > otp_record.expires_at or otp_record.code_hash != generate_otp_hash(otp):
+        if not otp_record or otp_record.attempts >= 5 or datetime.datetime.utcnow() > otp_record.expires_at or otp_record.code_hash != generate_otp_hash(otp):
             if otp_record: 
                 otp_record.attempts += 1
                 db.session.commit()
@@ -236,7 +236,7 @@ def verify_login_otp():
             
         user = User.query.filter_by(email=email).first()
         if user:
-            token = jwt.encode({'user_id': user.user_id, 'email': user.email, 'role': user.role, 'exp': datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=24)}, app.config['SECRET_KEY'], algorithm='HS256')
+            token = jwt.encode({'user_id': user.user_id, 'email': user.email, 'role': user.role, 'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)}, app.config['SECRET_KEY'], algorithm='HS256')
             db.session.delete(otp_record)
             db.session.commit()
             return jsonify({"status": "success", "token": token, "user": {"user_id": user.user_id, "name": user.name, "email": user.email, "role": user.role}})
@@ -324,7 +324,7 @@ def interview_chat(current_user):
     if active_session and Question.query.filter_by(session_id=active_session.session_id).count() >= 15:
         active_session.status = 'completed'; db.session.commit(); active_session = None
     if not active_session:
-        active_session = InterviewSession(user_id=current_user.user_id, job_role=job_role, status='in_progress', started_at=datetime.datetime.now(datetime.timezone.utc))
+        active_session = InterviewSession(user_id=current_user.user_id, job_role=job_role, status='in_progress', started_at=datetime.datetime.utcnow())
         db.session.add(active_session); db.session.commit()
 
     if Question.query.filter_by(session_id=active_session.session_id).count() >= 15:
@@ -512,7 +512,7 @@ def get_admin_metrics(current_user):
     avg_tech = round(sum(f.technical_score for f in feedbacks) / len(feedbacks), 1) if feedbacks else 0
     avg_behav = round(sum(f.behavioral_score for f in feedbacks) / len(feedbacks), 1) if feedbacks else 0
     
-    thirty_days_ago = datetime.datetime.now(datetime.timezone.utc) - timedelta(days=30)
+    thirty_days_ago = datetime.datetime.utcnow() - timedelta(days=30)
     recent_sessions = InterviewSession.query.filter(InterviewSession.started_at >= thirty_days_ago).all()
     
     volume_data = {}
@@ -522,7 +522,7 @@ def get_admin_metrics(current_user):
     
     chart_volume = []
     for i in range(30, -1, -1):
-        day = (datetime.datetime.now(datetime.timezone.utc) - timedelta(days=i))
+        day = (datetime.datetime.utcnow() - timedelta(days=i))
         day_str = day.strftime('%m-%d')
         chart_volume.append({"date": day_str, "count": volume_data.get(day_str, 0)})
 
