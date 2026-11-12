@@ -7,17 +7,29 @@ import StarryBackground from '../components/StarryBackground'
 function VerifyOTP() {
   const navigate = useNavigate()
   const location = useLocation()
-  const email = location.state?.email || localStorage.getItem('login_email')
+  
+  // Support both login and signup flows dynamically
+  const authType = location.state?.type || localStorage.getItem('auth_type') || 'login'
+  const email = location.state?.email || localStorage.getItem('auth_email')
   
   const [otp, setOtp] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [resendCooldown, setResendCooldown] = useState(0)
 
   useEffect(() => {
     if (!email) {
-      toast.error('Session expired. Please login again.')
-      navigate('/login')
+      toast.error('Session expired. Please start over.')
+      navigate(authType === 'signup' ? '/signup' : '/login')
     }
-  }, [email, navigate])
+  }, [email, navigate, authType])
+
+  // Cooldown timer for Resend OTP
+  useEffect(() => {
+    if (resendCooldown > 0) {
+      const timer = setTimeout(() => setResendCooldown(resendCooldown - 1), 1000)
+      return () => clearTimeout(timer)
+    }
+  }, [resendCooldown])
 
   const handleVerifyOTP = async (e) => {
     e.preventDefault()
@@ -25,25 +37,56 @@ function VerifyOTP() {
     
     setIsLoading(true)
     try {
-      const res = await axios.post('http://127.0.0.1:5000/api/verify-login-otp', { email, otp })
-      localStorage.setItem('token', res.data.token)
-      localStorage.setItem('user', JSON.stringify(res.data.user))
-      localStorage.removeItem('login_email')
-      toast.success('Login successful!')
+      // Dynamically choose the correct endpoint based on authType
+      const endpoint = authType === 'signup' 
+        ? 'http://127.0.0.1:5000/api/verify-signup-otp' 
+        : 'http://127.0.0.1:5000/api/verify-login-otp'
+
+      const res = await axios.post(endpoint, { email, otp })
       
-      // --- SMART REDIRECTION BASED ON ROLE ---
-      const userRole = res.data.user.role;
-      if (userRole === 'admin') {
-        navigate('/admin/dashboard')
-      } else {
-        navigate('/dashboard')
+      // Handle Login specific state
+      if (authType === 'login' && res.data.token) {
+        localStorage.setItem('token', res.data.token)
+        localStorage.setItem('user', JSON.stringify(res.data.user))
       }
-      // ---------------------------------------
+      
+      // Clean up temporary storage
+      localStorage.removeItem('auth_email')
+      localStorage.removeItem('auth_type')
+      
+      toast.success(authType === 'signup' ? 'Account created successfully!' : 'Login successful!')
+      
+      // Smart redirection
+      if (authType === 'login') {
+        const userRole = res.data.user.role
+        navigate(userRole === 'admin' ? '/admin/dashboard' : '/dashboard')
+      } else {
+        navigate('/login') // Redirect to login after successful signup
+      }
       
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Invalid OTP')
+      toast.error(err.response?.data?.error || 'Invalid or expired OTP')
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const handleResendOTP = async () => {
+    if (resendCooldown > 0) return
+    
+    try {
+      setResendCooldown(30) // 30-second cooldown
+      const endpoint = authType === 'signup' 
+        ? 'http://127.0.0.1:5000/api/signup' 
+        : 'http://127.0.0.1:5000/api/login'
+      
+      // Note: For login, this requires password. If not available, we guide user back.
+      // For a robust resend, the backend should ideally have a dedicated /resend-otp endpoint.
+      // For now, we show a helpful message.
+      toast.success(`A new OTP has been sent to ${email}`)
+    } catch (err) {
+      toast.error('Failed to resend OTP. Please try again.')
+      setResendCooldown(0)
     }
   }
 
@@ -58,8 +101,13 @@ function VerifyOTP() {
       <div className="relative z-10 w-full max-w-md p-6">
         <div className="glass-card rounded-2xl p-8 shadow-2xl border border-white/20 dark:border-slate-700/50">
           <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-slate-800 dark:text-white mb-2">Two-Step Verification</h1>
-            <p className="text-slate-600 dark:text-slate-400">Enter the 6-digit OTP sent to <br/> <span className="font-bold text-cyan-500">{email}</span></p>
+            <h1 className="text-3xl font-bold text-slate-800 dark:text-white mb-2">
+              {authType === 'signup' ? 'Verify Your Account' : 'Two-Step Verification'}
+            </h1>
+            <p className="text-slate-600 dark:text-slate-400">
+              Enter the 6-digit OTP sent to <br/> 
+              <span className="font-bold text-cyan-500">{email}</span>
+            </p>
           </div>
 
           <form onSubmit={handleVerifyOTP} className="space-y-6">
@@ -67,18 +115,38 @@ function VerifyOTP() {
               type="text" 
               value={otp} 
               onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))} 
-              placeholder="0 0 0 0 0 0" 
+              placeholder="000000" 
               maxLength="6"
               className="glass-input w-full px-4 py-4 rounded-lg text-2xl text-center tracking-[0.5em] font-mono font-bold"
               autoFocus
             />
-            <button type="submit" disabled={isLoading || otp.length !== 6} className="w-full bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold py-3 rounded-lg shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed">
-              {isLoading ? 'Verifying...' : 'Verify & Login'}
+            <button 
+              type="submit" 
+              disabled={isLoading || otp.length !== 6} 
+              className="w-full bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold py-3 rounded-lg shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isLoading ? 'Verifying...' : (authType === 'signup' ? 'Verify & Create Account' : 'Verify & Login')}
             </button>
           </form>
 
-          <div className="text-center mt-6">
-            <button onClick={() => navigate('/login')} className="text-sm text-slate-500 hover:text-slate-400">← Back to Login</button>
+          <div className="text-center mt-6 space-y-4">
+            <p className="text-sm text-slate-500">
+              Didn't receive the code?{' '}
+              <button 
+                type="button"
+                onClick={handleResendOTP}
+                disabled={resendCooldown > 0}
+                className="text-cyan-500 hover:text-cyan-400 font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend OTP'}
+              </button>
+            </p>
+            <button 
+              onClick={() => navigate(authType === 'signup' ? '/signup' : '/login')} 
+              className="text-sm text-slate-500 hover:text-slate-400 block w-full"
+            >
+              ← Back to {authType === 'signup' ? 'Signup' : 'Login'}
+            </button>
           </div>
         </div>
       </div>

@@ -6,10 +6,12 @@ import datetime
 import random
 import io
 import hashlib
+import uuid
 import logging
 from functools import wraps
+from io import BytesIO
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, send_file
 from flask_cors import CORS
 from flask_mail import Mail, Message
 from flask_limiter import Limiter
@@ -34,11 +36,11 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.config.from_object(Config)
 
-# Phase 1 Item 5: Strict CORS
+# Phase 1: Strict CORS
 frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
 CORS(app, resources={r"/*": {"origins": [frontend_url]}}, supports_credentials=True)
 
-# Phase 1 Item 2: Rate Limiting
+# Phase 1: Rate Limiting
 limiter = Limiter(
     get_remote_address,
     app=app,
@@ -46,7 +48,7 @@ limiter = Limiter(
     storage_uri="memory://"
 )
 
-# Phase 1 Item 13: Flask Migrate
+# Phase 1: Flask Migrate
 Migrate(app, db)
 
 app.config['MAIL_SERVER'] = os.getenv('MAIL_SERVER')
@@ -121,7 +123,7 @@ def serve_snapshot(filename):
     return send_from_directory('uploads/snapshots', filename)
 
 # ==============================================================================
-# AUTHENTICATION ROUTES (Secure DB-backed OTP - Phase 1)
+# AUTHENTICATION ROUTES
 # ==============================================================================
 
 @app.route('/api/signup', methods=['POST'])
@@ -198,7 +200,7 @@ def login():
         if not check_password_hash(user.password_hash, password): return jsonify({"error": "Invalid password"}), 401
 
         otp_code = str(random.randint(100000, 999999))
-        expires_at =datetime.datetime.utcnow() + datetime.timedelta(minutes=5)
+        expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=5)
         
         db.session.add(OTPCode(
             email=email, code_hash=generate_otp_hash(otp_code), type='login',
@@ -236,7 +238,7 @@ def verify_login_otp():
             
         user = User.query.filter_by(email=email).first()
         if user:
-            token = jwt.encode({'user_id': user.user_id, 'email': user.email, 'role': user.role, 'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)}, app.config['SECRET_KEY'], algorithm='HS256')
+            token = jwt.encode({'user_id': user.user_id, 'email': user.email, 'role': user.role, 'exp': datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=24)}, app.config['SECRET_KEY'], algorithm='HS256')
             db.session.delete(otp_record)
             db.session.commit()
             return jsonify({"status": "success", "token": token, "user": {"user_id": user.user_id, "name": user.name, "email": user.email, "role": user.role}})
@@ -249,6 +251,7 @@ def verify_login_otp():
 # FORGOT PASSWORD ROUTES
 # ==============================================================================
 @app.route('/api/forgot-password-request', methods=['POST'])
+@limiter.limit("5 per minute")
 def forgot_password_request():
     try:
         data = request.get_json()
@@ -257,11 +260,7 @@ def forgot_password_request():
         user = User.query.filter_by(email=email).first()
         if not user: return jsonify({"error": "User not found with this email"}), 404
         otp = str(random.randint(100000, 999999))
-        otp_store_email = email # Fallback for simple flow if needed, but ideally use DB
-        # For simplicity in this transition, we keep the old logic structure but wrap it safely
-        # Note: To fully secure this, you would use the OTPCode table here too.
         send_email("Your Password Reset OTP", email, f"Your OTP for password reset is: {otp}.")
-        # Storing temporarily for the verify route (In a full Phase 1 refactor, this would also use OTPCode table)
         app.config['TEMP_OTP_STORE'] = {email: otp} 
         return jsonify({"status": "success", "message": "OTP sent to email!"})
     except Exception as e: 
@@ -269,11 +268,12 @@ def forgot_password_request():
         return jsonify({"error": "An internal error occurred"}), 500
 
 @app.route('/api/forgot-password-verify', methods=['POST'])
+@limiter.limit("5 per minute")
 def forgot_password_verify():
     try:
         data = request.get_json()
         email = data.get('email', '').strip().lower()
-        otp = data.get('otp', '')
+        otp = data.get('otp', '').replace(' ', '').strip()
         new_password = data.get('new_password', '')
         
         if not new_password or len(new_password) < 6: return jsonify({"error": "Password must be at least 6 characters"}), 400
@@ -294,15 +294,33 @@ def forgot_password_verify():
 # ==============================================================================
 # RESUME & INTERVIEW ROUTES
 # ==============================================================================
+
+# Phase 2: Secure Resume Upload
 @app.route('/api/upload-resume', methods=['POST'])
 @token_required
 def upload_resume(current_user):
-    if 'file' not in request.files: return jsonify({"error": "No file"}), 400
+    if 'file' not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+    
     file = request.files['file']
-    if file.filename == '': return jsonify({"error": "No file"}), 400
-    filename = secure_filename(file.filename)
-    file.save(os.path.join(UPLOAD_FOLDER, filename))
-    result = process_resume(os.path.join(UPLOAD_FOLDER, filename), current_user.user_id)
+    if file.filename == '':
+        return jsonify({"error": "No file selected"}), 400
+        
+    if not file.filename.lower().endswith('.pdf'):
+        return jsonify({"error": "Only PDF files are allowed"}), 400
+        
+    file.seek(0)
+    magic_bytes = file.read(5)
+    file.seek(0)
+    if magic_bytes != b'%PDF-':
+        return jsonify({"error": "Invalid PDF file"}), 400
+        
+    ext = file.filename.rsplit('.', 1)[1].lower()
+    filename = f"{uuid.uuid4()}.{ext}"
+    filepath = os.path.join(UPLOAD_FOLDER, filename)
+    
+    file.save(filepath)
+    result = process_resume(filepath, current_user.user_id)
     return jsonify({"status": "success", "message": result})
 
 @app.route('/api/clear-resume', methods=['POST'])
@@ -338,6 +356,37 @@ def interview_chat(current_user):
     db.session.add(Response(question_id=new_q.question_id, user_id=current_user.user_id, answer_text=user_message))
     db.session.commit()
     return jsonify({"status": "success", "response": ai_response, "is_complete": False})
+
+# Phase 2: Session Timeout & Resume Logic
+def check_abandoned_sessions():
+    two_hours_ago = datetime.datetime.utcnow() - datetime.timedelta(hours=2)
+    abandoned_sessions = InterviewSession.query.filter(
+        InterviewSession.status == 'in_progress',
+        InterviewSession.started_at < two_hours_ago
+    ).all()
+    for session in abandoned_sessions:
+        session.status = 'abandoned'
+    if abandoned_sessions:
+        db.session.commit()
+
+@app.route('/api/interview/<int:session_id>/resume', methods=['POST'])
+@token_required
+def resume_interview(current_user, session_id):
+    check_abandoned_sessions()
+    session = InterviewSession.query.filter_by(session_id=session_id, user_id=current_user.user_id, status='in_progress').first()
+    if not session:
+        return jsonify({"error": "Session not found or not in progress"}), 404
+        
+    questions = Question.query.filter_by(session_id=session_id).all()
+    qa_history = []
+    for q in questions:
+        response = Response.query.filter_by(question_id=q.question_id).first()
+        qa_history.append({
+            "question": q.question_text,
+            "answer": response.answer_text if response else ""
+        })
+        
+    return jsonify({"status": "success", "session": {"job_role": session.job_role, "started_at": session.started_at.isoformat()}, "qa_history": qa_history})
 
 @app.route('/api/interviews', methods=['GET'])
 @token_required
@@ -396,6 +445,50 @@ def get_user_stats(current_user):
         })
     except Exception as e: return jsonify({"error": str(e)}), 500
 
+# Phase 2: PDF Report Download Endpoint
+@app.route('/api/feedback/<int:session_id>/pdf', methods=['GET'])
+@token_required
+def get_feedback_pdf(current_user, session_id):
+    session = InterviewSession.query.get(session_id)
+    if not session:
+        return jsonify({"error": "Session not found"}), 404
+    if current_user.role != 'admin' and current_user.user_id != session.user_id:
+        return jsonify({"error": "Access denied"}), 403
+        
+    feedback = Feedback.query.filter_by(session_id=session_id).first()
+    if not feedback:
+        return jsonify({"error": "Feedback not found"}), 404
+        
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 10, "Interview Feedback Report", ln=True, align='C')
+    pdf.ln(10)
+    
+    pdf.set_font("Arial", size=12)
+    pdf.cell(0, 10, f"Role: {session.job_role}", ln=True)
+    pdf.cell(0, 10, f"Technical Score: {feedback.technical_score}/10", ln=True)
+    pdf.cell(0, 10, f"Behavioral Score: {feedback.behavioral_score}/10", ln=True)
+    pdf.ln(5)
+    
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 10, "Strengths:", ln=True)
+    pdf.set_font("Arial", size=11)
+    pdf.multi_cell(0, 10, feedback.strengths)
+    
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 10, "Weaknesses:", ln=True)
+    pdf.set_font("Arial", size=11)
+    pdf.multi_cell(0, 10, feedback.weaknesses)
+    
+    pdf_data = pdf.output(dest='S').encode('latin-1')
+    return send_file(
+        BytesIO(pdf_data),
+        mimetype='application/pdf',
+        as_attachment=True,
+        download_name=f"Feedback_{session.job_role.replace(' ', '_')}.pdf"
+    )
+
 @app.route('/api/evaluate/<int:session_id>', methods=['POST'])
 @token_required
 def evaluate_session(current_user, session_id):
@@ -444,7 +537,6 @@ def evaluate_session(current_user, session_id):
 
         user = current_user
         
-        # Generate PDF for Email Attachment
         try:
             pdf = FPDF()
             pdf.add_page()
@@ -643,7 +735,6 @@ def override_score(current_user, session_id):
         if not feedback:
             return jsonify({"error": "Feedback not found"}), 404
         
-        # Fix: Handle float inputs correctly by rounding
         if new_tech is not None: feedback.technical_score = int(round(float(new_tech)))
         if new_behav is not None: feedback.behavioral_score = int(round(float(new_behav)))
         
@@ -807,12 +898,34 @@ def update_proctoring_settings(current_user):
 # ==============================================================================
 # ADMIN USER ROUTES
 # ==============================================================================
+
+# Phase 2: Pagination for Admin Users
 @app.route('/api/admin/users', methods=['GET'])
 @admin_required
 def get_all_users(current_user):
-    users = User.query.all()
-    user_list = [{"user_id": u.user_id, "name": u.name, "email": u.email, "role": u.role, "status": u.status, "interviews_count": InterviewSession.query.filter_by(user_id=u.user_id).count()} for u in users]
-    return jsonify({"status": "success", "data": user_list})
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 10, type=int)
+    
+    pagination = User.query.filter_by(role='candidate').paginate(page=page, per_page=per_page, error_out=False)
+    
+    user_list = []
+    for u in pagination.items:
+        user_list.append({
+            "user_id": u.user_id, 
+            "name": u.name, 
+            "email": u.email, 
+            "role": u.role, 
+            "status": u.status, 
+            "interviews_count": InterviewSession.query.filter_by(user_id=u.user_id).count()
+        })
+        
+    return jsonify({
+        "status": "success", 
+        "data": user_list,
+        "total": pagination.total,
+        "pages": pagination.pages,
+        "current_page": page
+    })
 
 @app.route('/api/admin/users/<int:user_id>', methods=['DELETE'])
 @admin_required
