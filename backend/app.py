@@ -64,9 +64,16 @@ mail = Mail(app)
 db.init_app(app)
 
 with app.app_context():
-    db.create_all()
-    print("✅ Database tables created successfully!")
-
+    try:
+        db.create_all()
+        print("✅ Database tables created successfully!")
+    except Exception as e:
+        # If another worker already created the tables, gracefully ignore the duplicate error
+        if "already exists" in str(e) or "DuplicateTable" in str(e) or "UniqueViolation" in str(e):
+            print("ℹ️ Database tables already exist (created by another worker), skipping.")
+        else:
+            print(f"⚠️ Database initialization error: {e}")
+            
 UPLOAD_FOLDER = 'uploads'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)

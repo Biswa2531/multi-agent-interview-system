@@ -8,6 +8,7 @@ psycopg2-binary
 python-dotenv==1.0.0
 langchain
 langchain-groq
+langchain-text-splitters
 chromadb
 pypdf
 fpdf
