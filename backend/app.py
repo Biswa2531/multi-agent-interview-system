@@ -75,10 +75,8 @@ with app.app_context():
             print(f"⚠️ Database initialization error: {e}")
             
 UPLOAD_FOLDER = 'uploads'
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
-if not os.path.exists(os.path.join(UPLOAD_FOLDER, 'snapshots')):
-    os.makedirs(os.path.join(UPLOAD_FOLDER, 'snapshots'))
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(os.path.join(UPLOAD_FOLDER, 'snapshots'), exist_ok=True)
 
 # ==============================================================================
 # HELPERS & DECORATORS
@@ -111,17 +109,21 @@ def admin_required(f):
 
 def send_email(subject, recipient, body, attachment_data=None, attachment_name=None):
     try:
+        import socket
+        socket.setdefaulttimeout(10)  # Prevent hanging forever on bad connections
+        
         sender_name = f"Multi-Agent Interview System <{app.config['MAIL_USERNAME']}>"
         msg = Message(subject, sender=sender_name, recipients=[recipient])
         msg.body = body
         if attachment_data:
             msg.attach(attachment_name, "application/pdf", attachment_data)
+            
         mail.send(msg)
         return True
     except Exception as e:
         logger.error(f"[EMAIL ERROR] Failed to send to {recipient}: {e}")
         return False
-
+        
 def generate_otp_hash(code):
     return hashlib.sha256(code.encode()).hexdigest()
 
