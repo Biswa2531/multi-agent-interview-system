@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import axios from 'axios'
+import api from '../api' // ✅ Centralized API instance (auto-attaches JWT, handles 401)
 import toast from 'react-hot-toast'
 import StarryBackground from '../components/StarryBackground'
 import ForgotPasswordModal from '../components/ForgotPasswordModal'
@@ -32,13 +32,14 @@ function Login() {
     return () => mediaQuery.removeEventListener('change', handleChange)
   }, [theme])
 
+  // ✅ Clean API call: No URL, no headers needed!
   const handleLogin = async (e) => {
     e.preventDefault()
     if (!email || !password) return toast.error('Please fill in all fields')
     
     setIsLoading(true)
     try {
-      const res = await axios.post('http://127.0.0.1:5000/api/login', { email, password })
+      const res = await api.post('/api/login', { email, password })
       toast.success(res.data.message)
       localStorage.setItem('login_email', email)
       navigate('/verify-otp', { state: { type: 'login', email } })
@@ -139,4 +140,5 @@ function Login() {
     </div>
   )
 }
+
 export default Login
