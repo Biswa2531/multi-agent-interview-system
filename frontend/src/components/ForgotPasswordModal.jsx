@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import axios from 'axios'
+import api from '../api' // ✅ Centralized API instance (auto-attaches JWT if needed, handles 401)
 import toast from 'react-hot-toast'
 
 function ForgotPasswordModal({ isOpen, onClose }) {
@@ -12,11 +12,12 @@ function ForgotPasswordModal({ isOpen, onClose }) {
 
   if (!isOpen) return null
 
+  // ✅ Clean POST call: No URL, no headers needed!
   const handleSendOTP = async () => {
     if (!email) return toast.error('Please enter your email')
     setIsLoading(true)
     try {
-      const res = await axios.post('http://127.0.0.1:5000/api/forgot-password-request', { email })
+      const res = await api.post('/api/forgot-password-request', { email })
       toast.success(res.data.message)
       setStep(2)
     } catch (err) {
@@ -26,6 +27,7 @@ function ForgotPasswordModal({ isOpen, onClose }) {
     }
   }
 
+  // ✅ Clean POST call: No URL, no headers needed!
   const handleVerifyAndReset = async () => {
     if (otp.length !== 6) return toast.error('Please enter a valid 6-digit OTP')
     if (newPassword !== confirmPassword) return toast.error('Passwords do not match')
@@ -33,7 +35,7 @@ function ForgotPasswordModal({ isOpen, onClose }) {
     
     setIsLoading(true)
     try {
-      const res = await axios.post('http://127.0.0.1:5000/api/forgot-password-verify', { email, otp, new_password: newPassword })
+      const res = await api.post('/api/forgot-password-verify', { email, otp, new_password: newPassword })
       toast.success(res.data.message)
       setStep(4)
     } catch (err) {
