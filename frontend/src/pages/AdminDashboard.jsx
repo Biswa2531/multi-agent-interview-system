@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import axios from 'axios'
+import api from '../api' // ✅ Centralized API instance (auto-attaches JWT, handles 401)
 import toast from 'react-hot-toast'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts'
 
@@ -11,12 +11,10 @@ function AdminDashboard() {
 
   useEffect(() => { fetchMetrics() }, [])
 
+  // ✅ Clean GET call: No URL, no headers needed!
   const fetchMetrics = async () => {
     try {
-      const token = localStorage.getItem('token')
-      const res = await axios.get('http://127.0.0.1:5000/api/admin/metrics', { 
-        headers: { 'Authorization': `Bearer ${token}` } 
-      })
+      const res = await api.get('/api/admin/metrics')
       setMetrics(res.data.data)
     } catch (err) {
       toast.error('Failed to load admin metrics')
