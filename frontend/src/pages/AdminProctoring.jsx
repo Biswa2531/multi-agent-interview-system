@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import axios from 'axios'
+import api from '../api' // ✅ Centralized API instance (auto-attaches JWT, handles 401)
 import toast from 'react-hot-toast'
 import { jsPDF } from "jspdf"
 
@@ -15,12 +15,10 @@ function AdminProctoring() {
 
   useEffect(() => { fetchLogs() }, [])
 
+  // ✅ No more token header, no more hardcoded URL
   const fetchLogs = async () => {
     try {
-      const token = localStorage.getItem('token')
-      const res = await axios.get('http://127.0.0.1:5000/api/admin/proctoring', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
+      const res = await api.get('/api/admin/proctoring')
       setLogs(res.data.data)
     } catch (err) {
       toast.error('Failed to load proctoring logs')
@@ -29,15 +27,13 @@ function AdminProctoring() {
     }
   }
 
+  // ✅ Clean POST call — api.js auto-attaches the Authorization header
   const handleFlag = async (sessionId, candidateName) => {
     if (!window.confirm(`Are you sure you want to flag this session for ${candidateName}?`)) return
     try {
-      const token = localStorage.getItem('token')
-      await axios.post(`http://127.0.0.1:5000/api/admin/proctoring/${sessionId}/flag`, {
+      await api.post(`/api/admin/proctoring/${sessionId}/flag`, {
         type: 'Manual Admin Flag',
         description: 'Flagged during review'
-      }, {
-        headers: { 'Authorization': `Bearer ${token}` }
       })
       toast.success(`Session flagged successfully!`)
       fetchLogs()
@@ -46,14 +42,12 @@ function AdminProctoring() {
     }
   }
 
+  // ✅ Clean GET call with dynamic path
   const fetchEvidence = async (sessionId) => {
     setIsEvidenceLoading(true)
     setIsEvidenceOpen(true)
     try {
-      const token = localStorage.getItem('token')
-      const res = await axios.get(`http://127.0.0.1:5000/api/admin/proctoring/${sessionId}/evidence`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
+      const res = await api.get(`/api/admin/proctoring/${sessionId}/evidence`)
       setEvidenceData(res.data.data)
     } catch (err) {
       toast.error('Failed to load evidence')
@@ -62,6 +56,7 @@ function AdminProctoring() {
     }
   }
 
+  // ✅ PDF generation logic stays 100% unchanged (no API calls here)
   const generatePDFReport = () => {
     if (!evidenceData) return;
     const doc = new jsPDF();
