@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import axios from 'axios'
+import api from '../api' // ✅ Centralized API instance (auto-attaches JWT, handles 401)
 import toast from 'react-hot-toast'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import StarryBackground from '../components/StarryBackground'
@@ -18,12 +18,10 @@ function Dashboard() {
 
   useEffect(() => { fetchStats() }, [])
 
+  // ✅ No more token header, no more hardcoded URL
   const fetchStats = async () => {
     try {
-      const token = localStorage.getItem('token')
-      const res = await axios.get('http://127.0.0.1:5000/api/user/stats', { 
-        headers: { 'Authorization': `Bearer ${token}` } 
-      })
+      const res = await api.get('/api/user/stats')
       setStats(res.data)
     } catch (err) {
       toast.error('Failed to load dashboard data')
@@ -32,13 +30,11 @@ function Dashboard() {
     }
   }
 
+  // ✅ Clean DELETE call
   const handleDeleteInterview = async (sessionId) => {
     if (!window.confirm('Are you sure you want to delete this interview record?')) return
     try {
-      const token = localStorage.getItem('token')
-      await axios.delete(`http://127.0.0.1:5000/api/interview/${sessionId}`, { 
-        headers: { 'Authorization': `Bearer ${token}` } 
-      })
+      await api.delete(`/api/interview/${sessionId}`)
       toast.success('Interview deleted successfully')
       fetchStats()
     } catch (err) {
@@ -148,7 +144,6 @@ function Dashboard() {
                       <td className="py-4 px-4 text-sm font-bold text-emerald-500">{session.behavioral_score}/10</td>
                       <td className="py-4 px-4">
                         <div className="flex gap-2">
-                          {/* ✅ FIXED: Now uses session_id instead of interview_number */}
                           <button 
                             onClick={() => navigate(`/feedback/${session.session_id}`)} 
                             className="text-xs bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-400 px-3 py-1.5 rounded hover:bg-cyan-200 dark:hover:bg-cyan-900/50 transition-colors font-medium"
