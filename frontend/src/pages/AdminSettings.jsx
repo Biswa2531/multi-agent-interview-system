@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import axios from 'axios'
+import api from '../api' // ✅ Centralized API instance (auto-attaches JWT, handles 401)
 import toast from 'react-hot-toast'
 
 function AdminSettings() {
@@ -16,12 +16,10 @@ function AdminSettings() {
     fetchSettings()
   }, [])
 
+  // ✅ No more token header, no more hardcoded URL
   const fetchSettings = async () => {
     try {
-      const token = localStorage.getItem('token')
-      const res = await axios.get('http://127.0.0.1:5000/api/admin/settings/proctoring', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
+      const res = await api.get('/api/admin/settings/proctoring')
       setMaxViolations(res.data.data.max_violations)
       setWebcamEnabled(res.data.data.webcam_enabled)
     } catch (err) {
@@ -29,14 +27,12 @@ function AdminSettings() {
     }
   }
 
+  // ✅ Clean POST call — api.js auto-attaches the Authorization header
   const handleSaveProctoringSettings = async () => {
     try {
-      const token = localStorage.getItem('token')
-      await axios.post('http://127.0.0.1:5000/api/admin/settings/proctoring', {
+      await api.post('/api/admin/settings/proctoring', {
         max_violations: maxViolations,
         webcam_enabled: webcamEnabled
-      }, {
-        headers: { 'Authorization': `Bearer ${token}` }
       })
       toast.success('Proctoring settings saved to database!')
     } catch (err) {
