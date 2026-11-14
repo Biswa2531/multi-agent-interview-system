@@ -429,31 +429,44 @@ def delete_interview(current_user, session_id):
 @token_required
 def get_user_stats(current_user):
     try:
-        sessions = InterviewSession.query.filter_by(user_id=current_user.user_id, status='completed').order_by(InterviewSession.started_at.asc()).all()
-        interview_history = []
-        total_tech = 0; total_behav = 0; count = 0
-        for session in sessions:
-            feedback = Feedback.query.filter_by(session_id=session.session_id).first()
-            if feedback:
-                total_tech += feedback.technical_score; total_behav += feedback.behavioral_score; count += 1
-                interview_history.append({
-                    "session_id": session.session_id,
-                    "interview_number": count, 
-                    "date": session.started_at.strftime("%d %b %Y, %I:%M %p"), 
-                    "job_role": session.job_role, 
-                    "technical_score": feedback.technical_score, 
-                    "behavioral_score": feedback.behavioral_score, 
-                    "average_score": round((feedback.technical_score + feedback.behavioral_score) / 2, 1)
-                })
-        return jsonify({
-            "status": "success", 
-            "total_interviews": count, 
-            "average_technical_score": round(total_tech / count, 1) if count > 0 else 0, 
-            "average_behavioral_score": round(total_behav / count, 1) if count > 0 else 0, 
-            "interview_history": interview_history
-        })
-    except Exception as e: return jsonify({"error": str(e)}), 500
+        # Fetch ALL sessions for this user (completed + in-progress)
+        all_sessions = InterviewSession.query.filter_by(
+            user_id=current_user.user_id
+        ).order_by(InterviewSession.started_at.desc()).all()
 
+        # Compute averages ONLY from completed sessions that have feedback
+        completed = [s for s in all_sessions if s.status == 'completed']
+        tech_scores = [f.technical_score for s in completed for f in [Feedback.query.filter_by(session_id=s.session_id).first()] if f and f.technical_score is not None]
+        behav_scores = [f.behavioral_score for s in completed for f in [Feedback.query.filter_by(session_id=s.session_id).first()] if f and f.behavioral_score is not None]
+
+        # Build history list INCLUDING in-progress sessions
+        history = []
+        for idx, s in enumerate(all_sessions, 1):
+            fb = Feedback.query.filter_by(session_id=s.session_id).first()
+            history.append({
+                'session_id': s.session_id,
+                'job_role': s.job_role,
+                'date': s.started_at.strftime('%d %b %Y, %I:%M %p') if s.started_at else 'N/A',
+                'status': s.status,  # 'completed' or 'in_progress'
+                'interview_number': len(all_sessions) - idx + 1,
+                'technical_score': fb.technical_score if fb and fb.technical_score is not None else None,
+                'behavioral_score': fb.behavioral_score if fb and fb.behavioral_score is not None else None,
+                'average_score': round((fb.technical_score + fb.behavioral_score) / 2, 1) if fb and fb.technical_score is not None else None
+            })
+
+        # Find active session (if any) so the dashboard can show a Resume banner
+        active = next((s.session_id for s in all_sessions if s.status == 'in_progress'), None)
+
+        return jsonify({
+            'total_interviews': len(completed),
+            'active_session_id': active,
+            'average_technical_score': round(sum(tech_scores)/len(tech_scores), 1) if tech_scores else 0,
+            'average_behavioral_score': round(sum(behav_scores)/len(behav_scores), 1) if behav_scores else 0,
+            'interview_history': history
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    
 # Phase 2: PDF Report Download Endpoint
 @app.route('/api/feedback/<int:session_id>/pdf', methods=['GET'])
 @token_required

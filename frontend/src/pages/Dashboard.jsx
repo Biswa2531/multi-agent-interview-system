@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import api from '../api' // ✅ Centralized API instance (auto-attaches JWT, handles 401)
+import api from '../api'
 import toast from 'react-hot-toast'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import StarryBackground from '../components/StarryBackground'
@@ -12,13 +12,13 @@ function Dashboard() {
     total_interviews: 0,
     average_technical_score: 0,
     average_behavioral_score: 0,
+    active_session_id: null,
     interview_history: []
   })
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => { fetchStats() }, [])
 
-  // ✅ No more token header, no more hardcoded URL
   const fetchStats = async () => {
     try {
       const res = await api.get('/api/user/stats')
@@ -30,7 +30,6 @@ function Dashboard() {
     }
   }
 
-  // ✅ Clean DELETE call
   const handleDeleteInterview = async (sessionId) => {
     if (!window.confirm('Are you sure you want to delete this interview record?')) return
     try {
@@ -40,6 +39,11 @@ function Dashboard() {
     } catch (err) {
       toast.error('Failed to delete interview')
     }
+  }
+
+  // ✅ Resume an in-progress session by passing its ID to the Interview page
+  const handleResumeInterview = (sessionId) => {
+    navigate('/interview', { state: { sessionId, jobRole: user.lastRole || 'Software Engineer' } })
   }
 
   const handleStartInterview = () => {
@@ -56,17 +60,35 @@ function Dashboard() {
     <div className="min-h-screen relative overflow-hidden bg-gray-50 dark:bg-slate-900 transition-colors duration-300">
       <StarryBackground />
       <div className="relative z-10 container mx-auto px-6 py-8 pt-24 max-w-7xl">
-        
-        {/* Welcome Header */}
+
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-slate-800 dark:text-white mb-2">Welcome back, {user.name}!</h1>
           <p className="text-slate-600 dark:text-slate-400">Track your interview progress and performance analytics</p>
         </div>
 
+        {/* ✅ ACTIVE SESSION BANNER */}
+        {stats.active_session_id && (
+          <div className="glass-card p-5 rounded-2xl border border-amber-500/40 bg-amber-500/10 mb-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-3 h-3 rounded-full bg-amber-500 animate-pulse shrink-0"></div>
+              <div>
+                <p className="text-sm font-bold text-amber-700 dark:text-amber-400">You have an interview in progress</p>
+                <p className="text-xs text-slate-600 dark:text-slate-400">Pick up exactly where you left off — your answers are saved.</p>
+              </div>
+            </div>
+            <button
+              onClick={() => handleResumeInterview(stats.active_session_id)}
+              className="bg-amber-500 hover:bg-amber-400 text-slate-900 font-bold px-5 py-2.5 rounded-lg shadow-lg transition-all text-sm whitespace-nowrap"
+            >
+              ▶ Resume Interview
+            </button>
+          </div>
+        )}
+
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <div className="glass-card p-6 rounded-2xl border border-white/20 dark:border-slate-700/50">
-            <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">Total Interviews</p>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">Completed Interviews</p>
             <p className="text-3xl font-bold text-cyan-500">{stats.total_interviews}</p>
           </div>
           <div className="glass-card p-6 rounded-2xl border border-white/20 dark:border-slate-700/50">
@@ -80,22 +102,16 @@ function Dashboard() {
         </div>
 
         {/* Progress Chart */}
-        {stats.interview_history.length > 0 && (
+        {stats.interview_history.filter(s => s.status === 'completed').length > 0 && (
           <div className="glass-card p-6 rounded-2xl border border-white/20 dark:border-slate-700/50 mb-8">
             <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-4">Performance Progress</h2>
             <div className="h-64 w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={stats.interview_history}>
+                <LineChart data={stats.interview_history.filter(s => s.status === 'completed')}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#475569" />
                   <XAxis dataKey="interview_number" stroke="#94a3b8" />
                   <YAxis stroke="#94a3b8" domain={[0, 10]} />
-                  <Tooltip 
-                    contentStyle={{ 
-                      backgroundColor: 'rgba(15, 23, 42, 0.9)', 
-                      border: '1px solid rgba(148, 163, 184, 0.2)',
-                      borderRadius: '8px'
-                    }}
-                  />
+                  <Tooltip contentStyle={{ backgroundColor: 'rgba(15, 23, 42, 0.9)', border: '1px solid rgba(148, 163, 184, 0.2)', borderRadius: '8px' }} />
                   <Legend />
                   <Line type="monotone" dataKey="technical_score" stroke="#a855f7" strokeWidth={2} name="Technical" />
                   <Line type="monotone" dataKey="behavioral_score" stroke="#10b981" strokeWidth={2} name="Behavioral" />
@@ -109,7 +125,7 @@ function Dashboard() {
         {/* Interview History */}
         <div className="glass-card p-6 rounded-2xl border border-white/20 dark:border-slate-700/50">
           <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-4">📋 Interview History</h2>
-          
+
           {stats.interview_history.length === 0 ? (
             <div className="text-center py-12">
               <p className="text-slate-500 dark:text-slate-400 mb-4">No interviews yet. Start your first interview!</p>
@@ -136,22 +152,35 @@ function Dashboard() {
                       <td className="py-4 px-4 text-sm text-slate-800 dark:text-slate-200 font-medium">{session.job_role}</td>
                       <td className="py-4 px-4 text-sm text-slate-600 dark:text-slate-400">{session.date}</td>
                       <td className="py-4 px-4">
-                        <span className="text-xs font-bold px-3 py-1 rounded-full border bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800">
-                          COMPLETED
+                        <span className={`text-xs font-bold px-3 py-1 rounded-full border ${
+                          session.status === 'completed'
+                            ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800'
+                            : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800 animate-pulse'
+                        }`}>
+                          {session.status.toUpperCase()}
                         </span>
                       </td>
-                      <td className="py-4 px-4 text-sm font-bold text-purple-500">{session.technical_score}/10</td>
-                      <td className="py-4 px-4 text-sm font-bold text-emerald-500">{session.behavioral_score}/10</td>
+                      <td className="py-4 px-4 text-sm font-bold text-purple-500">{session.technical_score ?? '—'}</td>
+                      <td className="py-4 px-4 text-sm font-bold text-emerald-500">{session.behavioral_score ?? '—'}</td>
                       <td className="py-4 px-4">
                         <div className="flex gap-2">
-                          <button 
-                            onClick={() => navigate(`/feedback/${session.session_id}`)} 
-                            className="text-xs bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-400 px-3 py-1.5 rounded hover:bg-cyan-200 dark:hover:bg-cyan-900/50 transition-colors font-medium"
-                          >
-                            View
-                          </button>
-                          <button 
-                            onClick={() => handleDeleteInterview(session.session_id)} 
+                          {session.status === 'in_progress' ? (
+                            <button
+                              onClick={() => handleResumeInterview(session.session_id)}
+                              className="text-xs bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 px-3 py-1.5 rounded hover:bg-amber-200 dark:hover:bg-amber-900/50 transition-colors font-bold"
+                            >
+                              ▶ Resume
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => navigate(`/feedback/${session.session_id}`)}
+                              className="text-xs bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-400 px-3 py-1.5 rounded hover:bg-cyan-200 dark:hover:bg-cyan-900/50 transition-colors font-medium"
+                            >
+                              View
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleDeleteInterview(session.session_id)}
                             className="text-xs bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 px-3 py-1.5 rounded hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors font-medium"
                           >
                             Delete
