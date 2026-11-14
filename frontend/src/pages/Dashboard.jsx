@@ -66,9 +66,9 @@ function Dashboard() {
           <p className="text-slate-600 dark:text-slate-400">Track your interview progress and performance analytics</p>
         </div>
 
-        {/* ✅ ACTIVE SESSION BANNER */}
+        {/* ✅ ACTIVE SESSION RESUME BANNER */}
         {stats.active_session_id && (
-          <div className="glass-card p-5 rounded-2xl border border-amber-500/40 bg-amber-500/10 mb-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="glass-card p-5 rounded-2xl border border-amber-500/40 bg-amber-500/10 mb-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 animate-pulse-slow">
             <div className="flex items-center gap-3">
               <div className="w-3 h-3 rounded-full bg-amber-500 animate-pulse shrink-0"></div>
               <div>
@@ -101,7 +101,7 @@ function Dashboard() {
           </div>
         </div>
 
-        {/* Progress Chart */}
+        {/* Progress Chart (Only show completed ones) */}
         {stats.interview_history.filter(s => s.status === 'completed').length > 0 && (
           <div className="glass-card p-6 rounded-2xl border border-white/20 dark:border-slate-700/50 mb-8">
             <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-4">Performance Progress</h2>
@@ -157,7 +157,7 @@ function Dashboard() {
                             ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800'
                             : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800 animate-pulse'
                         }`}>
-                          {session.status.toUpperCase()}
+                          {session.status.toUpperCase().replace('_', ' ')}
                         </span>
                       </td>
                       <td className="py-4 px-4 text-sm font-bold text-purple-500">{session.technical_score ?? '—'}</td>

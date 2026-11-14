@@ -429,7 +429,7 @@ def delete_interview(current_user, session_id):
 @token_required
 def get_user_stats(current_user):
     try:
-        # Fetch ALL sessions for this user (completed + in-progress)
+        # Fetch ALL sessions for this user (completed + in_progress)
         all_sessions = InterviewSession.query.filter_by(
             user_id=current_user.user_id
         ).order_by(InterviewSession.started_at.desc()).all()
@@ -466,7 +466,7 @@ def get_user_stats(current_user):
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-    
+        
 # Phase 2: PDF Report Download Endpoint
 @app.route('/api/feedback/<int:session_id>/pdf', methods=['GET'])
 @token_required
