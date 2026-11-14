@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import api from '../api' // ✅ Centralized API instance (auto-attaches JWT, handles 401)
+import api from '../api' // ✅ Centralized API instance
 import toast from 'react-hot-toast'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 
@@ -17,7 +17,6 @@ function AdminUsers() {
 
   useEffect(() => { fetchUsers() }, [])
 
-  // ✅ No more token header, no more hardcoded URL
   const fetchUsers = async () => {
     try {
       const res = await api.get('/api/admin/users')
@@ -29,7 +28,6 @@ function AdminUsers() {
     }
   }
 
-  // ✅ Clean DELETE call
   const handleDelete = async (userId, userName) => {
     if (!window.confirm(`Are you sure you want to delete ${userName}? This will delete all their interview data.`)) return
     try {
@@ -41,7 +39,6 @@ function AdminUsers() {
     }
   }
 
-  // ✅ Clean POST call
   const handleResetPassword = async (userId, userEmail) => {
     if (!window.confirm(`Reset password for ${userEmail}? A temporary password will be emailed.`)) return
     try {
@@ -52,7 +49,6 @@ function AdminUsers() {
     }
   }
 
-  // ✅ Clean POST call
   const handleToggleBlock = async (userId, currentStatus) => {
     const newStatus = currentStatus === 'active' ? 'blocked' : 'active'
     try {
@@ -64,15 +60,12 @@ function AdminUsers() {
     }
   }
 
-  // Fetch User Details
+  // ✅ FIXED: Now queries the SELECTED candidate's stats, not the logged-in admin's stats
   const fetchUserDetails = async (user) => {
     setIsDetailsLoading(true)
     setSelectedUser(user)
     try {
-      // ⚠️ Note: /api/user/stats returns the stats of the *currently logged-in user* (the admin).
-      // If you want to view the selected candidate's stats, you may need to add an admin-specific 
-      // backend endpoint like: /api/admin/users/${user.user_id}/stats
-      const res = await api.get('/api/user/stats') 
+      const res = await api.get(`/api/admin/users/${user.user_id}/stats`)
       setUserDetails(res.data)
     } catch (err) {
       toast.error('Failed to load user details')
@@ -229,10 +222,14 @@ function AdminUsers() {
                   <button onClick={() => { setSelectedUser(null); setUserDetails(null) }} className="text-slate-400 hover:text-white text-2xl">✕</button>
                 </div>
 
+                {/* ✅ FIXED: Cards now show total_sessions and completed_interviews so it perfectly matches the table */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
                   <div className="glass-card p-4 rounded-xl text-center">
-                    <p className="text-sm text-slate-500 dark:text-slate-400">Total Interviews</p>
-                    <p className="text-3xl font-bold text-cyan-500 mt-2">{userDetails.total_interviews}</p>
+                    <p className="text-sm text-slate-500 dark:text-slate-400">Total Sessions</p>
+                    <p className="text-3xl font-bold text-cyan-500 mt-2">{userDetails.total_sessions}</p>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      {userDetails.completed_interviews} completed · {userDetails.total_sessions - userDetails.completed_interviews} in progress
+                    </p>
                   </div>
                   <div className="glass-card p-4 rounded-xl text-center">
                     <p className="text-sm text-slate-500 dark:text-slate-400">Avg. Technical Score</p>

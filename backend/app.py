@@ -979,6 +979,57 @@ def toggle_block_user(current_user, user_id):
     db.session.commit()
     return jsonify({"status": "success", "message": f"User status changed to {user.status}"})
 
+@app.route('/api/admin/users/<int:user_id>/stats', methods=['GET'])
+@admin_required
+def get_user_stats_for_admin(current_user, user_id):
+    # Only admins can view another user's stats
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Admin access required'}), 403
+
+    target = User.query.get(user_id)
+    if not target:
+        return jsonify({'error': 'User not found'}), 404
+
+    try:
+        # Fetch ALL sessions for the TARGET user (not the logged-in admin)
+        all_sessions = InterviewSession.query.filter_by(
+            user_id=user_id
+        ).order_by(InterviewSession.started_at.desc()).all()
+
+        completed = [s for s in all_sessions if s.status == 'completed']
+        
+        # Calculate averages only from completed sessions with feedback
+        tech_scores = [f.technical_score for s in completed for f in [Feedback.query.filter_by(session_id=s.session_id).first()] if f and f.technical_score is not None]
+        behav_scores = [f.behavioral_score for s in completed for f in [Feedback.query.filter_by(session_id=s.session_id).first()] if f and f.behavioral_score is not None]
+
+        # Build history list
+        history = []
+        for idx, s in enumerate(all_sessions, 1):
+            fb = Feedback.query.filter_by(session_id=s.session_id).first()
+            history.append({
+                'session_id': s.session_id,
+                'job_role': s.job_role,
+                'date': s.started_at.strftime('%d %b %Y, %I:%M %p') if s.started_at else 'N/A',
+                'status': s.status,
+                'interview_number': len(all_sessions) - idx + 1,
+                'technical_score': fb.technical_score if fb and fb.technical_score is not None else None,
+                'behavioral_score': fb.behavioral_score if fb and fb.behavioral_score is not None else None,
+                'average_score': round((fb.technical_score + fb.behavioral_score) / 2, 1) if fb and fb.technical_score is not None else None
+            })
+
+        active = next((s.session_id for s in all_sessions if s.status == 'in_progress'), None)
+
+        return jsonify({
+            'total_sessions': len(all_sessions),
+            'completed_interviews': len(completed),
+            'active_session_id': active,
+            'average_technical_score': round(sum(tech_scores)/len(tech_scores), 1) if tech_scores else 0,
+            'average_behavioral_score': round(sum(behav_scores)/len(behav_scores), 1) if behav_scores else 0,
+            'interview_history': history
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    
 @app.route('/api/dev/promote-to-admin', methods=['POST'])
 def promote_to_admin():
     data = request.get_json()
