@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import axios from 'axios'
+import api from '../api' // ✅ Centralized API instance (auto-attaches JWT, handles 401)
 import toast from 'react-hot-toast'
 import StarryBackground from '../components/StarryBackground'
 
@@ -31,6 +31,7 @@ function Signup() {
     return () => mediaQuery.removeEventListener('change', handleChange)
   }, [theme])
 
+  // ✅ Clean API call: No URL, no headers needed!
   const handleSignup = async (e) => {
     e.preventDefault()
     if (!name || !email || !password) return toast.error('Please fill in all fields')
@@ -38,7 +39,7 @@ function Signup() {
     
     setIsLoading(true)
     try {
-      const res = await axios.post('http://127.0.0.1:5000/api/signup', { name, email, password })
+      const res = await api.post('/api/signup', { name, email, password })
       toast.success(res.data.message)
       localStorage.setItem('login_email', email)
       navigate('/verify-otp', { state: { type: 'signup', email } })
@@ -141,4 +142,5 @@ function Signup() {
     </div>
   )
 }
+
 export default Signup
