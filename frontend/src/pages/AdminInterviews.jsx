@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import axios from 'axios'
+import api from '../api' // ✅ Centralized API instance (auto-attaches JWT, handles 401)
 import toast from 'react-hot-toast'
 
 function AdminInterviews() {
@@ -9,7 +9,7 @@ function AdminInterviews() {
   const [filterStatus, setFilterStatus] = useState('all')
   const [searchTerm, setSearchTerm] = useState('')
   
-  // NEW: Sorting State
+  // Sorting State
   const [sortConfig, setSortConfig] = useState({ key: 'started_at', direction: 'desc' })
 
   // Deep Dive Modal State
@@ -24,12 +24,10 @@ function AdminInterviews() {
 
   useEffect(() => { fetchInterviews() }, [])
 
+  // ✅ Clean GET call: No URL, no headers needed!
   const fetchInterviews = async () => {
     try {
-      const token = localStorage.getItem('token')
-      const res = await axios.get('http://127.0.0.1:5000/api/admin/interviews', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
+      const res = await api.get('/api/admin/interviews')
       setInterviews(res.data.data)
     } catch (err) {
       toast.error('Failed to load interviews')
@@ -38,7 +36,7 @@ function AdminInterviews() {
     }
   }
 
-  // NEW: Sorting Logic
+  // Sorting Logic (unchanged)
   const requestSort = (key) => {
     let direction = 'asc'
     if (sortConfig.key === key && sortConfig.direction === 'asc') {
@@ -57,14 +55,12 @@ function AdminInterviews() {
     return sortableInterviews
   }
 
+  // ✅ Clean GET call with dynamic path
   const fetchTranscript = async (sessionId) => {
     setIsTranscriptLoading(true)
     setIsTranscriptOpen(true)
     try {
-      const token = localStorage.getItem('token')
-      const res = await axios.get(`http://127.0.0.1:5000/api/admin/interviews/${sessionId}/transcript`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
+      const res = await api.get(`/api/admin/interviews/${sessionId}/transcript`)
       setTranscriptData(res.data.data)
       setNewTechScore(res.data.data.technical_score || 0)
       setNewBehavScore(res.data.data.behavioral_score || 0)
@@ -76,16 +72,14 @@ function AdminInterviews() {
     }
   }
 
+  // ✅ Clean POST call with body — api.js auto-attaches the token
   const handleOverride = async () => {
     if (!transcriptData) return
     try {
-      const token = localStorage.getItem('token')
-      await axios.post(`http://127.0.0.1:5000/api/admin/interviews/${transcriptData.session_id}/override-score`, {
+      await api.post(`/api/admin/interviews/${transcriptData.session_id}/override-score`, {
         technical_score: newTechScore,
         behavioral_score: newBehavScore,
         reason: overrideReason
-      }, {
-        headers: { 'Authorization': `Bearer ${token}` }
       })
       toast.success('Scores overridden successfully!')
       setIsTranscriptOpen(false)
@@ -314,7 +308,7 @@ function AdminInterviews() {
                           <label className="block text-xs text-slate-400 mb-1">Reason for Override</label>
                           <textarea value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} rows="2" className="glass-input w-full px-3 py-1.5 text-sm" placeholder="e.g. Candidate showed exceptional logic..." />
                         </div>
-                        <button onClick={handleOverride} className="w-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white font-bold py-2 rounded-lg transition-all text-sm">
+                        <button onClick={handleOverride} className="w-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-500 text-white font-bold py-2 rounded-lg transition-all text-sm">
                           Apply Override & Save
                         </button>
                       </div>
