@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import axios from 'axios'
+import api from '../api' // ✅ Centralized API instance (auto-attaches JWT, handles 401)
 import toast from 'react-hot-toast'
 import StarryBackground from '../components/StarryBackground'
 
@@ -31,6 +31,7 @@ function VerifyOTP() {
     }
   }, [resendCooldown])
 
+  // ✅ Clean API call: Dynamic endpoint, no hardcoded URL or headers needed!
   const handleVerifyOTP = async (e) => {
     e.preventDefault()
     if (otp.length !== 6) return toast.error('Please enter a valid 6-digit OTP')
@@ -39,10 +40,10 @@ function VerifyOTP() {
     try {
       // Dynamically choose the correct endpoint based on authType
       const endpoint = authType === 'signup' 
-        ? 'http://127.0.0.1:5000/api/verify-signup-otp' 
-        : 'http://127.0.0.1:5000/api/verify-login-otp'
+        ? '/api/verify-signup-otp' 
+        : '/api/verify-login-otp'
 
-      const res = await axios.post(endpoint, { email, otp })
+      const res = await api.post(endpoint, { email, otp })
       
       // Handle Login specific state
       if (authType === 'login' && res.data.token) {
@@ -76,9 +77,6 @@ function VerifyOTP() {
     
     try {
       setResendCooldown(30) // 30-second cooldown
-      const endpoint = authType === 'signup' 
-        ? 'http://127.0.0.1:5000/api/signup' 
-        : 'http://127.0.0.1:5000/api/login'
       
       // Note: For login, this requires password. If not available, we guide user back.
       // For a robust resend, the backend should ideally have a dedicated /resend-otp endpoint.
