@@ -426,7 +426,7 @@ function Interview() {
           </div>
         </div>
 
-        <div className="flex-1 flex overflow-hidden p-4 gap-4">
+        <div className="flex-1 flex flex-col md:flex-row overflow-hidden p-4 gap-4">
           <div className="flex-1 flex flex-col gap-4 min-w-0">
             <div className="flex-1 glass-card rounded-2xl p-4 flex flex-col overflow-hidden">
               <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
