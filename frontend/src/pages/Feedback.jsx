@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import axios from 'axios'
+import api from '../api' // ✅ Centralized API instance (auto-attaches JWT, handles 401)
 import toast from 'react-hot-toast'
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Legend, RadialBarChart, RadialBar } from 'recharts'
 import { jsPDF } from "jspdf"
@@ -13,16 +13,14 @@ function Feedback() {
   const [feedback, setFeedback] = useState(null)
   const [isLoading, setIsLoading] = useState(true)
   
-  // NEW: Ref for capturing charts
+  // Ref for capturing charts in PDF
   const chartsContainerRef = useRef(null)
 
   useEffect(() => {
     const fetchFeedback = async () => {
       try {
-        const token = localStorage.getItem('token')
-        const res = await axios.get(`http://127.0.0.1:5000/api/interviews`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        })
+        // ✅ Clean API call: No URL, no headers needed!
+        const res = await api.get('/api/interviews')
         const session = res.data.data.find(s => s.session_id === parseInt(id))
         
         if (session) {
@@ -55,7 +53,7 @@ function Feedback() {
     return { text: 'REJECT', color: 'text-red-600 dark:text-red-400 bg-red-100 dark:bg-red-900/30 border-red-200 dark:border-red-800' }
   }
 
-  // UPDATED: PDF Generation with Charts
+  // PDF Generation with Charts (Client-side)
   const generateFeedbackPDF = async () => {
     if (!feedback) return
     
@@ -86,15 +84,12 @@ function Feedback() {
 
     // 3. Capture Charts as Image
     if (chartsContainerRef.current) {
-      // Use html2canvas to screenshot the charts div
       const canvas = await html2canvas(chartsContainerRef.current, {
         backgroundColor: '#0f172a', // Match dark mode background
         scale: 2 // Higher quality
       })
       const imgData = canvas.toDataURL('image/png')
       
-      // Add image to PDF (x, y, width, height)
-      // We place it below the text summary
       const imgWidth = 180
       const imgHeight = (canvas.height * imgWidth) / canvas.width
       
@@ -110,7 +105,11 @@ function Feedback() {
     toast.success("Feedback PDF with charts downloaded!")
   }
 
-  if (isLoading) return <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-900"><div className="text-cyan-500 text-xl animate-pulse">Loading Feedback Report...</div></div>
+  if (isLoading) return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-900">
+      <div className="text-cyan-500 text-xl animate-pulse">Loading Feedback Report...</div>
+    </div>
+  )
   if (!feedback) return null
 
   const avgScore = ((feedback.technical_score + feedback.behavioral_score) / 2).toFixed(1)
@@ -171,7 +170,7 @@ function Feedback() {
           </div>
         </div>
 
-        {/* NEW: Wrapped Charts in a Ref for PDF Capture */}
+        {/* Wrapped Charts in a Ref for PDF Capture */}
         <div ref={chartsContainerRef} className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8 p-4 rounded-xl bg-slate-900/50">
           <div className="glass-card p-6 rounded-2xl border border-white/20 dark:border-slate-700/50">
             <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-4">Skill Assessment vs Industry Benchmark</h2>
