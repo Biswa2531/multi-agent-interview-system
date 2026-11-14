@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import axios from 'axios'
+import api from '../api' // ✅ Centralized API instance (auto-attaches JWT, handles 401)
 import toast from 'react-hot-toast'
 import Editor from '@monaco-editor/react'
 import StarryBackground from '../components/StarryBackground'
@@ -82,7 +82,7 @@ function Interview() {
     if (hintsUsed >= 3) { toast.error('Maximum hints reached for this session.'); return }
     setHintsUsed(prev => prev + 1)
     addLog('warning', `Hint requested by candidate. Score penalty applied (-5%). Hint #${hintsUsed + 1} used.`)
-    toast.success(' Hint: Try breaking the problem down into smaller functions first!')
+    toast.success('💡 Hint: Try breaking the problem down into smaller functions first!')
     setMessages(prev => [...prev, { role: 'ai', text: `**[HINT PROVIDED]**\nSince you asked for a clue, try breaking the problem down into smaller, manageable functions. Remember to handle edge cases! (Note: 5% score penalty applied).` }])
   }
 
@@ -130,18 +130,15 @@ function Interview() {
     }
   }
 
-  // NEW: Centralized function to submit interview data (handles both manual end and auto-submit)
+  // ✅ UPDATED: Centralized function to submit interview data using api.js
   const submitInterviewData = async (currentSnapshots, isAutoSubmit = false) => {
     setIsLoading(true);
     try {
-      const token = localStorage.getItem('token');
       let currentSessionId = sessionId;
 
       // Fix: If sessionId is missing, fetch the active session from backend
       if (!currentSessionId) {
-          const res = await axios.get('http://127.0.0.1:5000/api/interviews', { 
-              headers: { 'Authorization': `Bearer ${token}` } 
-          });
+          const res = await api.get('/api/interviews');
           const activeSession = res.data.data.find(s => s.status === 'in_progress');
           if (activeSession) {
               currentSessionId = activeSession.session_id;
@@ -153,10 +150,8 @@ function Interview() {
       }
       
       // 1. Call the backend to evaluate the session AND send the real snapshots
-      await axios.post(`http://127.0.0.1:5000/api/evaluate/${currentSessionId}`, {
+      await api.post(`/api/evaluate/${currentSessionId}`, {
         snapshots: currentSnapshots // Send the base64 images here!
-      }, {
-        headers: { 'Authorization': `Bearer ${token}` }
       });
       
       if (isAutoSubmit) {
@@ -310,6 +305,7 @@ function Interview() {
     submitInterviewData(snapshots, false);
   };
 
+  // ✅ UPDATED: handleSend using api.js
   const handleSend = async () => {
     if (!input.trim() || isLoading) return
     if (!interviewStarted) { setInterviewStarted(true); addLog('success', 'Timer started. Interview is now live.') }
@@ -321,9 +317,8 @@ function Interview() {
     addLog('warning', 'Candidate response received. Processing...')
 
     try {
-      const token = localStorage.getItem('token')
       const chatHistory = messages.map(m => ({ role: m.role === 'ai' ? 'assistant' : 'user', text: m.text, content: m.text }))
-      const res = await axios.post('http://127.0.0.1:5000/api/interview', { message: userMessage, job_role: jobRole, chat_history: chatHistory, current_round: currentRound }, { headers: { 'Authorization': `Bearer ${token}` } })
+      const res = await api.post('/api/interview', { message: userMessage, job_role: jobRole, chat_history: chatHistory, current_round: currentRound })
       addLog('info', 'Evaluator Agent (Chronos): Analyzing response...')
       setMessages(prev => [...prev, { role: 'ai', text: res.data.response }])
       setTechScore(prev => Math.min(prev + Math.random() * 1.5, 10))
