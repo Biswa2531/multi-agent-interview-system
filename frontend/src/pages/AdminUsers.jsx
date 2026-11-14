@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import axios from 'axios'
+import api from '../api' // ✅ Centralized API instance (auto-attaches JWT, handles 401)
 import toast from 'react-hot-toast'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 
@@ -10,19 +10,17 @@ function AdminUsers() {
   const [currentPage, setCurrentPage] = useState(1)
   const usersPerPage = 10
   
-  // NEW: View Details Modal State
+  // View Details Modal State
   const [selectedUser, setSelectedUser] = useState(null)
   const [userDetails, setUserDetails] = useState(null)
   const [isDetailsLoading, setIsDetailsLoading] = useState(false)
 
   useEffect(() => { fetchUsers() }, [])
 
+  // ✅ No more token header, no more hardcoded URL
   const fetchUsers = async () => {
     try {
-      const token = localStorage.getItem('token')
-      const res = await axios.get('http://127.0.0.1:5000/api/admin/users', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
+      const res = await api.get('/api/admin/users')
       setUsers(res.data.data)
     } catch (err) {
       toast.error('Failed to load users')
@@ -31,13 +29,11 @@ function AdminUsers() {
     }
   }
 
+  // ✅ Clean DELETE call
   const handleDelete = async (userId, userName) => {
     if (!window.confirm(`Are you sure you want to delete ${userName}? This will delete all their interview data.`)) return
     try {
-      const token = localStorage.getItem('token')
-      await axios.delete(`http://127.0.0.1:5000/api/admin/users/${userId}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
+      await api.delete(`/api/admin/users/${userId}`)
       toast.success('User deleted successfully')
       fetchUsers()
     } catch (err) {
@@ -45,26 +41,22 @@ function AdminUsers() {
     }
   }
 
+  // ✅ Clean POST call
   const handleResetPassword = async (userId, userEmail) => {
     if (!window.confirm(`Reset password for ${userEmail}? A temporary password will be emailed.`)) return
     try {
-      const token = localStorage.getItem('token')
-      await axios.post(`http://127.0.0.1:5000/api/admin/users/${userId}/reset-password`, {}, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
+      await api.post(`/api/admin/users/${userId}/reset-password`)
       toast.success('Password reset successfully')
     } catch (err) {
       toast.error('Failed to reset password')
     }
   }
 
+  // ✅ Clean POST call
   const handleToggleBlock = async (userId, currentStatus) => {
     const newStatus = currentStatus === 'active' ? 'blocked' : 'active'
     try {
-      const token = localStorage.getItem('token')
-      await axios.post(`http://127.0.0.1:5000/api/admin/users/${userId}/toggle-block`, {}, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
+      await api.post(`/api/admin/users/${userId}/toggle-block`)
       toast.success(`User ${newStatus === 'active' ? 'unblocked' : 'blocked'} successfully`)
       fetchUsers()
     } catch (err) {
@@ -72,16 +64,15 @@ function AdminUsers() {
     }
   }
 
-  // NEW: Fetch User Details
+  // Fetch User Details
   const fetchUserDetails = async (user) => {
     setIsDetailsLoading(true)
     setSelectedUser(user)
     try {
-      const token = localStorage.getItem('token')
-      // Fetch user's interview history
-      const res = await axios.get('http://127.0.0.1:5000/api/user/stats', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
+      // ⚠️ Note: /api/user/stats returns the stats of the *currently logged-in user* (the admin).
+      // If you want to view the selected candidate's stats, you may need to add an admin-specific 
+      // backend endpoint like: /api/admin/users/${user.user_id}/stats
+      const res = await api.get('/api/user/stats') 
       setUserDetails(res.data)
     } catch (err) {
       toast.error('Failed to load user details')
@@ -235,7 +226,7 @@ function AdminUsers() {
                     </h2>
                     <p className="text-slate-400 mt-1">{selectedUser.name} ({selectedUser.email})</p>
                   </div>
-                  <button onClick={() => { setSelectedUser(null); setUserDetails(null) }} className="text-slate-400 hover:text-white text-2xl"></button>
+                  <button onClick={() => { setSelectedUser(null); setUserDetails(null) }} className="text-slate-400 hover:text-white text-2xl">✕</button>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
