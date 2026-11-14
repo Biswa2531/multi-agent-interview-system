@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import axios from 'axios'
+import api from '../api' // ✅ Centralized API instance (auto-attaches JWT, handles 401)
 import toast from 'react-hot-toast'
 import StarryBackground from '../components/StarryBackground'
 
@@ -13,37 +13,44 @@ function Profile() {
 
   useEffect(() => { fetchStats() }, [])
 
+  // ✅ Clean GET call
   const fetchStats = async () => {
     try {
-      const token = localStorage.getItem('token')
-      const res = await axios.get('http://127.0.0.1:5000/api/user/stats', { headers: { 'Authorization': `Bearer ${token}` } })
+      const res = await api.get('/api/user/stats')
       setStats(res.data)
-    } catch (err) { console.error(err) }
+    } catch (err) { 
+      console.error(err) 
+    }
   }
 
+  // ✅ Clean POST call
   const handleUpdateProfile = async (e) => {
     e.preventDefault()
     try {
-      const token = localStorage.getItem('token')
-      const res = await axios.post('http://127.0.0.1:5000/api/update-profile', { name }, { headers: { 'Authorization': `Bearer ${token}` } })
+      const res = await api.post('/api/update-profile', { name })
       toast.success(res.data.message)
       const updatedUser = { ...user, name }
       localStorage.setItem('user', JSON.stringify(updatedUser))
       window.location.reload() // Reload to update navbar
-    } catch (err) { toast.error(err.response?.data?.error || 'Update failed') }
+    } catch (err) { 
+      toast.error(err.response?.data?.error || 'Update failed') 
+    }
   }
 
+  // ✅ Clean POST call
   const handleChangePassword = async (e) => {
     e.preventDefault()
     if (newPw.length < 6) return toast.error('Password must be at least 6 characters')
     try {
-      const token = localStorage.getItem('token')
-      const res = await axios.post('http://127.0.0.1:5000/api/change-password', { current_password: currentPw, new_password: newPw }, { headers: { 'Authorization': `Bearer ${token}` } })
+      const res = await api.post('/api/change-password', { current_password: currentPw, new_password: newPw })
       toast.success(res.data.message)
       setCurrentPw(''); setNewPw('')
-    } catch (err) { toast.error(err.response?.data?.error || 'Failed to change password') }
+    } catch (err) { 
+      toast.error(err.response?.data?.error || 'Failed to change password') 
+    }
   }
 
+  // ✅ Clean POST call for FormData (Axios automatically handles multipart/form-data boundary)
   const handleResumeUpload = async (e) => {
     const file = e.target.files[0]
     if (!file) return
@@ -51,19 +58,24 @@ function Profile() {
     const formData = new FormData()
     formData.append('file', file)
     try {
-      const token = localStorage.getItem('token')
-      const res = await axios.post('http://127.0.0.1:5000/api/upload-resume', formData, { headers: { 'Authorization': `Bearer ${token}` } })
+      const res = await api.post('/api/upload-resume', formData)
       toast.success(res.data.message)
-    } catch (err) { toast.error('Upload failed') } finally { setIsUploading(false) }
+    } catch (err) { 
+      toast.error(err.response?.data?.error || 'Upload failed') 
+    } finally { 
+      setIsUploading(false) 
+    }
   }
 
+  // ✅ Clean POST call
   const handleClearResume = async () => {
     if (!window.confirm('Are you sure you want to clear your resume data from the AI?')) return
     try {
-      const token = localStorage.getItem('token')
-      const res = await axios.post('http://127.0.0.1:5000/api/clear-resume', {}, { headers: { 'Authorization': `Bearer ${token}` } })
+      const res = await api.post('/api/clear-resume', {})
       toast.success(res.data.message)
-    } catch (err) { toast.error('Failed to clear resume') }
+    } catch (err) { 
+      toast.error('Failed to clear resume') 
+    }
   }
 
   return (
@@ -140,4 +152,5 @@ function Profile() {
     </div>
   )
 }
+
 export default Profile
