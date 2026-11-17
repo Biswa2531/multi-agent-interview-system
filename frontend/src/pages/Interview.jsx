@@ -13,7 +13,7 @@ function Interview() {
   const [jobRole, setJobRole] = useState(location.state?.jobRole || 'Software Engineer')
   const [isRoleDropdownOpen, setIsRoleDropdownOpen] = useState(false)
   const [roleInput, setRoleInput] = useState(jobRole)
-  
+
   const roundLimits = { 1: 15 * 60, 2: 10 * 60, 3: 5 * 60 }
   const [currentRound, setCurrentRound] = useState(1)
   const [timeRemaining, setTimeRemaining] = useState(roundLimits[1])
@@ -37,6 +37,7 @@ function Interview() {
   const [violations, setViolations] = useState(0)
   const [webcamActive, setWebcamActive] = useState(false)
   const interviewStartedRef = useRef(interviewStarted)
+  const lastViolationRef = useRef(0) // ✅ Debounce guard against double-counting
   const [hintsUsed, setHintsUsed] = useState(0)
   const [techScore, setTechScore] = useState(0)
   const [behavScore, setBehavScore] = useState(0)
@@ -52,6 +53,7 @@ function Interview() {
   const animationRef = useRef(null)
 
   const [snapshots, setSnapshots] = useState([])
+  const snapshotsRef = useRef([]) // ✅ Always holds the LATEST snapshots (fixes stale-closure 0-snapshot bug)
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
 
@@ -59,6 +61,7 @@ function Interview() {
   const filteredRoles = jobRoles.filter(role => role.toLowerCase().includes(roleInput.toLowerCase()))
 
   useEffect(() => { interviewStartedRef.current = interviewStarted }, [interviewStarted])
+  useEffect(() => { snapshotsRef.current = snapshots }, [snapshots]) // ✅ Sync ref on every capture
 
   const addLog = (type, text) => setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), type, text }])
 
@@ -102,23 +105,23 @@ function Interview() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       streamRef.current = stream
-      
+
       const AudioContext = window.AudioContext || window.webkitAudioContext
       const audioContext = new AudioContext()
       audioContextRef.current = audioContext
-      
+
       const analyser = audioContext.createAnalyser()
       analyserRef.current = analyser
-      analyser.fftSize = 64 
-      
+      analyser.fftSize = 64
+
       const source = audioContext.createMediaStreamSource(stream)
       source.connect(analyser)
-      
+
       const bufferLength = analyser.frequencyBinCount
       const dataArray = new Uint8Array(bufferLength)
-      
+
       setIsListening(true)
-      
+
       const updateVisualizer = () => {
         analyser.getByteFrequencyData(dataArray)
         const levels = Array.from(dataArray.slice(0, 8)).map(value => (value / 255) * 100)
@@ -133,13 +136,12 @@ function Interview() {
     }
   }
 
-  // ✅ Centralized function to submit interview data using api.js (Moved ABOVE useEffect to prevent closure issues)
+  // ✅ Centralized function to submit interview data using api.js
   const submitInterviewData = async (currentSnapshots, isAutoSubmit = false) => {
     setIsLoading(true);
     try {
       let currentSessionId = sessionId;
 
-      // Fix: If sessionId is missing, fetch the active session from backend
       if (!currentSessionId) {
           const res = await api.get('/api/interviews');
           const activeSession = res.data.data.find(s => s.status === 'in_progress');
@@ -151,21 +153,19 @@ function Interview() {
               return;
           }
       }
-      
-      // 1. Call the backend to evaluate the session AND send the real snapshots
+
       await api.post(`/api/evaluate/${currentSessionId}`, {
         snapshots: currentSnapshots
       });
-      
+
       if (isAutoSubmit) {
           toast.error("Interview auto-submitted due to violations.");
       } else {
           toast.success("Interview evaluated successfully!");
       }
-      
-      // 2. Navigate to the feedback page WITH the session ID
+
       navigate(`/feedback/${currentSessionId}`);
-      
+
     } catch (err) {
       console.error(err);
       toast.error("Failed to evaluate interview. Please try again.");
@@ -178,8 +178,7 @@ function Interview() {
   useEffect(() => {
     const token = localStorage.getItem('token')
     if (!token) { navigate('/') }
-    
-    // ✅ Task 15: Fetch proctoring config on load
+
     const fetchProctoringConfig = async () => {
       try {
         const res = await api.get('/api/proctoring-config')
@@ -201,9 +200,8 @@ function Interview() {
 
     let snapshotInterval;
     let stream;
-    
+
     const initWebcam = async () => {
-      // ✅ Task 15: Only start the camera if the admin has enabled it
       if (!proctoringConfig.webcam_enabled) {
         addLog('info', 'Webcam proctoring is disabled by admin settings.')
         return
@@ -212,23 +210,23 @@ function Interview() {
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: true })
         setWebcamActive(true)
-        
+
         if (videoRef.current) {
           videoRef.current.srcObject = stream
         }
 
         addLog('success', 'Webcam proctoring activated. Snapshots will be taken every 10s.')
-        
+
         snapshotInterval = setInterval(() => {
           const canvas = canvasRef.current
           const video = videoRef.current
-          
+
           if (canvas && video && video.readyState === video.HAVE_ENOUGH_DATA) {
             canvas.width = video.videoWidth
             canvas.height = video.videoHeight
             const ctx = canvas.getContext('2d')
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-            
+
             const dataUrl = canvas.toDataURL('image/jpeg')
             setSnapshots(prev => [dataUrl, ...prev].slice(0, 5))
             addLog('info', 'Proctoring: Real webcam snapshot captured and encrypted.')
@@ -240,55 +238,75 @@ function Interview() {
     }
     initWebcam()
 
-    // ✅ Task 15: Updated violation logic to call API and auto-submit on max violations
-    const handleVisibilityChange = async () => {
-      if (document.hidden && interviewStartedRef.current) {
-        try {
-          let currentSessionId = sessionId;
-          if (!currentSessionId) {
-            const res = await api.get('/api/interviews');
-            const activeSession = res.data.data.find(s => s.status === 'in_progress');
-            if (activeSession) {
-                currentSessionId = activeSession.session_id;
-            } else {
-                return; // No active session to log violation against
-            }
-          }
+    // ✅ Violation logic with blur fallback + DEBOUNCE + snapshotsRef (no stale closure)
+    const handleViolation = async () => {
+      if (!interviewStartedRef.current) {
+        console.log('Interview not started yet, ignoring tab switch/blur.');
+        return;
+      }
 
-          // Log violation via centralized API
-          const res = await api.post('/api/violation', {
-            session_id: currentSessionId,
-            type: 'tab_switch',
-            details: 'Candidate switched tabs or minimized the window'
-          })
-          
-          const newCount = res.data.violation_count
-          setViolations(newCount)
-          addLog('error', `VIOLATION DETECTED: Tab switch or window minimize! (${newCount}/${proctoringConfig.max_violations})`)
-          toast.error(`⚠️ Warning: Tab switch detected! (${newCount}/${proctoringConfig.max_violations})`)
-          
-          // Auto-end interview if max violations reached
-          if (newCount >= proctoringConfig.max_violations) {
-            toast.error('Maximum violations reached. Auto-submitting interview...')
-            setTimeout(() => submitInterviewData(snapshots, true), 2000)
+      const now = Date.now();
+      if (now - lastViolationRef.current < 1500) {
+        console.log('Duplicate violation event ignored (debounce).');
+        return;
+      }
+      lastViolationRef.current = now;
+
+      try {
+        let currentSessionId = sessionId;
+
+        if (!currentSessionId) {
+          const res = await api.get('/api/interviews');
+          const activeSession = res.data.data?.find(s => s.status === 'in_progress');
+          if (activeSession) {
+              currentSessionId = activeSession.session_id;
+          } else {
+              console.warn('No active session found to log violation against.');
+              return;
           }
-        } catch (err) {
-          console.error('Failed to log violation', err)
         }
+
+        const res = await api.post('/api/violation', {
+          session_id: currentSessionId,
+          type: 'tab_switch',
+          details: 'Candidate switched tabs or minimized the window'
+        })
+
+        const newCount = res.data.violation_count
+        setViolations(newCount)
+        addLog('error', `VIOLATION DETECTED: Tab switch or window minimize! (${newCount}/${proctoringConfig.max_violations})`)
+        toast.error(`⚠️ Warning: Tab switch detected! (${newCount}/${proctoringConfig.max_violations})`)
+
+        if (newCount >= proctoringConfig.max_violations) {
+          toast.error('Maximum violations reached. Auto-submitting interview...')
+          // ✅ Use snapshotsRef.current so the LIVE frames are actually sent
+          setTimeout(() => submitInterviewData(snapshotsRef.current, true), 2000)
+        }
+      } catch (err) {
+        console.error('❌ Failed to log violation:', err)
+        toast.error('Proctoring error: Could not log violation. Check console (F12).')
       }
     }
-    
-    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        handleViolation();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', handleViolation);
 
     return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', handleViolation);
       if (snapshotInterval) clearInterval(snapshotInterval)
       if (stream) stream.getTracks().forEach(track => track.stop())
       cancelAnimationFrame(animationRef.current)
       if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop())
       if (audioContextRef.current) audioContextRef.current.close()
     }
-  }, [proctoringConfig.webcam_enabled]) // Added dependency
+  }, [proctoringConfig.webcam_enabled])
 
   useEffect(() => {
     if (messages.length === 1 && messages[0].role === 'ai') {
@@ -313,7 +331,7 @@ function Interview() {
       setIsActive(false)
       toast.error(`Time up for Round ${currentRound}!`)
       if (currentRound < 3) setCurrentRound(prev => prev + 1)
-      else { toast.success('Interview completed!'); setTimeout(() => submitInterviewData(snapshots), 2000) }
+      else { toast.success('Interview completed!'); setTimeout(() => submitInterviewData(snapshotsRef.current), 2000) } // ✅ ref
     }
     return () => clearInterval(interval)
   }, [isActive, timeRemaining, currentRound, navigate, interviewStarted])
@@ -345,7 +363,7 @@ function Interview() {
 
   const handleEndInterview = () => {
     if (!window.confirm("Are you sure you want to end the interview and generate your report?")) return;
-    submitInterviewData(snapshots, false);
+    submitInterviewData(snapshotsRef.current, false); // ✅ ref
   };
 
   const handleSend = async () => {
@@ -365,8 +383,8 @@ function Interview() {
       setMessages(prev => [...prev, { role: 'ai', text: res.data.response }])
       setTechScore(prev => Math.min(prev + Math.random() * 1.5, 10))
       setBehavScore(prev => Math.min(prev + Math.random() * 1.5, 10))
-      if (res.data.is_complete) { toast.success('Interview completed!'); setTimeout(() => submitInterviewData(snapshots), 1500) }
-    } catch (err) { toast.error('Failed to get AI response.'); addLog('error', 'API Error.') } 
+      if (res.data.is_complete) { toast.success('Interview completed!'); setTimeout(() => submitInterviewData(snapshotsRef.current), 1500) } // ✅ ref
+    } catch (err) { toast.error('Failed to get AI response.'); addLog('error', 'API Error.') }
     finally { setIsLoading(false) }
   }
 
@@ -384,15 +402,22 @@ function Interview() {
   const roundBadge = getRoundBadge()
 
   return (
-    <div 
-      onContextMenu={handleContextMenu} 
-      onCopy={handleCopy} 
+    <div
+      onContextMenu={handleContextMenu}
+      onCopy={handleCopy}
       onPaste={handlePaste}
       className="min-h-screen relative overflow-hidden bg-gray-50 dark:bg-slate-900 transition-colors duration-300"
     >
       <StarryBackground />
-      
-      <video ref={videoRef} autoPlay playsInline muted className="hidden" />
+
+      {/* ✅ Hidden but rendered video element for webcam capture (Fixes black screen snapshots) */}
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted
+        style={{ position: 'absolute', opacity: 0, pointerEvents: 'none', width: '1px', height: '1px' }}
+      />
       <canvas ref={canvasRef} className="hidden" />
 
       <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
@@ -401,13 +426,13 @@ function Interview() {
       </div>
 
       <div className="relative z-10 flex flex-col h-screen pt-16">
-        
+
         <div className="glass-card border-b border-white/20 dark:border-slate-700/50 px-6 py-3 shrink-0 relative z-30 overflow-visible">
           <div className="flex flex-wrap items-center justify-between gap-4 overflow-visible">
             <div className="flex items-center gap-4 flex-wrap">
               <span className="text-xs font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/30 px-3 py-1.5 rounded-full border border-emerald-200 dark:border-emerald-800 font-bold">● LIVE</span>
               <span className={`text-xs font-bold px-3 py-1.5 rounded-full border ${roundBadge.color}`}>{roundBadge.text}</span>
-              
+
               <div className={`text-lg font-mono font-bold px-4 py-1.5 rounded-lg border flex items-center gap-2 ${timeRemaining < 60 && interviewStarted ? 'text-red-600 bg-red-100 border-red-300 animate-pulse' : 'text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700'}`}>
                 {interviewStarted ? '⏱️' : '⏸️'} {formatTime(timeRemaining)}
               </div>
@@ -500,7 +525,7 @@ function Interview() {
               </div>
 
               <div className="mt-4 flex gap-2 items-center">
-                <button 
+                <button
                   onClick={toggleListening}
                   className={`p-3 rounded-lg transition-all ${isListening ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/30' : 'glass-button-secondary'}`}
                   title={isListening ? "Stop Listening" : "Start Listening"}
@@ -514,7 +539,7 @@ function Interview() {
 
                 <div className="flex items-center gap-1 h-8 px-2 glass-card rounded-lg min-w-[60px] justify-center">
                   {audioLevels.map((level, index) => (
-                    <div 
+                    <div
                       key={index}
                       className="w-1.5 bg-gradient-to-t from-cyan-500 to-blue-500 rounded-full transition-all duration-75"
                       style={{ height: `${Math.max(level, 10)}%` }}
@@ -522,18 +547,18 @@ function Interview() {
                   ))}
                 </div>
 
-                <input 
-                  type="text" 
-                  value={input} 
-                  onChange={(e) => setInput(e.target.value)} 
-                  onKeyDown={handleKeyDown} 
-                  placeholder={isListening ? "Listening... (Type your answer)" : "Type your answer here..."} 
-                  disabled={isLoading} 
-                  className="flex-1 glass-input px-4 py-3 text-sm" 
+                <input
+                  type="text"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={isListening ? "Listening... (Type your answer)" : "Type your answer here..."}
+                  disabled={isLoading}
+                  className="flex-1 glass-input px-4 py-3 text-sm"
                 />
-                <button 
-                  onClick={handleSend} 
-                  disabled={isLoading || !input.trim()} 
+                <button
+                  onClick={handleSend}
+                  disabled={isLoading || !input.trim()}
                   className="glass-button px-6 py-3 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
@@ -558,10 +583,10 @@ function Interview() {
           </div>
 
           <div className="w-full md:w-80 flex flex-col gap-4 shrink-0">
-            
+
             <div className="glass-card rounded-2xl p-4 space-y-3">
               <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">Active Agents</h3>
-              
+
               <div className="flex items-center gap-3 p-2 rounded-lg bg-white/40 dark:bg-slate-800/40 border border-white/20 dark:border-slate-700/50">
                 <div className="relative">
                   <div className="w-8 h-8 rounded-full bg-cyan-100 dark:bg-cyan-900/50 flex items-center justify-center text-cyan-600 dark:text-cyan-400 font-bold text-xs">S</div>

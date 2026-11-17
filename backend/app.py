@@ -52,7 +52,6 @@ limiter = Limiter(
 Migrate(app, db)
 
 app.config['MAIL_SERVER'] = os.getenv('MAIL_SERVER')
-# Task 4: Fix MAIL_PORT type casting with safe fallback
 app.config['MAIL_PORT'] = int(os.getenv('MAIL_PORT', '587'))
 app.config['MAIL_USE_TLS'] = os.getenv('MAIL_USE_TLS') == 'True'
 app.config['MAIL_USERNAME'] = os.getenv('MAIL_USERNAME')
@@ -109,27 +108,37 @@ def admin_required(f):
 
 def send_email(subject, recipient, body, attachment_data=None, attachment_name=None):
     try:
-        import socket
-        socket.setdefaulttimeout(10)
-        sender_name = f"Multi-Agent Interview System <{app.config['MAIL_USERNAME']}>"
-        msg = Message(subject, sender=sender_name, recipients=[recipient])
-        msg.body = body
-        if attachment_data:
-            msg.attach(attachment_name, "application/pdf", attachment_data)
-        mail.send(msg)
-        return True
+        with app.app_context():
+            sender_name = f"Multi-Agent Interview System <{app.config['MAIL_USERNAME']}>"
+            msg = Message(subject, sender=sender_name, recipients=[recipient])
+            msg.body = body
+            if attachment_data:
+                msg.attach(attachment_name, "application/pdf", attachment_data)
+            mail.send(msg)
+            return True
     except Exception as e:
         logger.error(f"[EMAIL ERROR] Failed to send to {recipient}: {e}")
         return False
-        
+                
 def generate_otp_hash(code):
     return hashlib.sha256(code.encode()).hexdigest()
 
-# Task 2: Protect serve_snapshot with @admin_required
-@app.route('/uploads/snapshots/<filename>')
+# ✅ FIX 1: Secure snapshot serving route that accepts JWT
+@app.route('/api/admin/snapshots/<int:session_id>/<filename>', methods=['GET'])
 @admin_required
-def serve_snapshot(current_user, filename):
-    return send_from_directory('uploads/snapshots', filename)
+def serve_snapshot(current_user, session_id, filename):
+    try:
+        safe_filename = os.path.basename(filename)
+        upload_folder = app.config.get('UPLOAD_FOLDER', os.path.join(app.root_path, 'uploads'))
+        file_path = os.path.join(upload_folder, f'session_{session_id}', safe_filename)
+        
+        if not os.path.exists(file_path):
+            return jsonify({"error": "Snapshot not found on disk"}), 404
+        
+        return send_file(file_path, mimetype='image/jpeg')
+    except Exception as e:
+        app.logger.error(f"Error serving snapshot: {e}")
+        return jsonify({"error": "Failed to serve snapshot"}), 500
 
 # ==============================================================================
 # AUTHENTICATION ROUTES
@@ -345,15 +354,29 @@ def clear_resume(current_user):
 @token_required
 def interview_chat(current_user):
     data = request.get_json()
-    user_message, job_role, chat_history = data.get('message', ''), data.get('job_role', 'Software Engineer'), data.get('chat_history', [])
+    user_message = data.get('message', '')
+    job_role = data.get('job_role', 'Software Engineer')
+    chat_history = data.get('chat_history', [])
     current_round = data.get('current_round', 1)
 
-    active_session = InterviewSession.query.filter_by(user_id=current_user.user_id, status='in_progress').order_by(InterviewSession.started_at.desc()).first()
+    active_session = InterviewSession.query.filter_by(
+        user_id=current_user.user_id, status='in_progress'
+    ).order_by(InterviewSession.started_at.desc()).first()
+    
     if active_session and Question.query.filter_by(session_id=active_session.session_id).count() >= 15:
-        active_session.status = 'completed'; db.session.commit(); active_session = None
+        active_session.status = 'completed'
+        db.session.commit()
+        active_session = None
+        
     if not active_session:
-        active_session = InterviewSession(user_id=current_user.user_id, job_role=job_role, status='in_progress', started_at=datetime.datetime.utcnow())
-        db.session.add(active_session); db.session.commit()
+        active_session = InterviewSession(
+            user_id=current_user.user_id, 
+            job_role=job_role, 
+            status='in_progress', 
+            started_at=datetime.datetime.utcnow()
+        )
+        db.session.add(active_session)
+        db.session.commit()
 
     if Question.query.filter_by(session_id=active_session.session_id).count() >= 15:
         return jsonify({"status": "success", "response": "Interview completed.", "is_complete": True})
@@ -361,11 +384,44 @@ def interview_chat(current_user):
     resume_context = get_resume_context(current_user.user_id)
     ai_response = get_interviewer_response(user_message, job_role, chat_history, resume_context, current_round)
 
-    new_q = Question(session_id=active_session.session_id, question_text=ai_response, category='Technical', difficulty='Medium')
-    db.session.add(new_q); db.session.commit()
-    db.session.add(Response(question_id=new_q.question_id, user_id=current_user.user_id, answer_text=user_message))
-    db.session.commit()
-    return jsonify({"status": "success", "response": ai_response, "is_complete": False})
+    try:
+        sess = InterviewSession.query.get(active_session.session_id)
+        if not sess:
+            sess = InterviewSession.query.filter_by(
+                user_id=current_user.user_id, status='in_progress'
+            ).order_by(InterviewSession.started_at.desc()).first()
+            
+        if sess:
+            new_q = Question(
+                session_id=sess.session_id, 
+                question_text=ai_response, 
+                category='Technical',
+                difficulty='Medium'
+            )
+            db.session.add(new_q)
+            db.session.flush()
+            
+            new_r = Response(
+                question_id=new_q.question_id, 
+                user_id=current_user.user_id, 
+                answer_text=user_message
+            )
+            db.session.add(new_r)
+            db.session.commit()
+        else:
+            db.session.rollback()
+            app.logger.warning("No valid session for persistence; skipping question/response save.")
+            
+    except Exception as q_err:
+        db.session.rollback()
+        app.logger.warning(f"Question/Response persistence skipped (non-fatal): {q_err}")
+
+    return jsonify({
+        "status": "success", 
+        "response": ai_response, 
+        "is_complete": False
+    })
+
 
 def check_abandoned_sessions():
     two_hours_ago = datetime.datetime.utcnow() - datetime.timedelta(hours=2)
@@ -378,11 +434,17 @@ def check_abandoned_sessions():
     if abandoned_sessions:
         db.session.commit()
 
+
 @app.route('/api/interview/<int:session_id>/resume', methods=['POST'])
 @token_required
 def resume_interview(current_user, session_id):
     check_abandoned_sessions()
-    session = InterviewSession.query.filter_by(session_id=session_id, user_id=current_user.user_id, status='in_progress').first()
+    session = InterviewSession.query.filter_by(
+        session_id=session_id, 
+        user_id=current_user.user_id, 
+        status='in_progress'
+    ).first()
+    
     if not session:
         return jsonify({"error": "Session not found or not in progress"}), 404
         
@@ -395,7 +457,14 @@ def resume_interview(current_user, session_id):
             "answer": response.answer_text if response else ""
         })
         
-    return jsonify({"status": "success", "session": {"job_role": session.job_role, "started_at": session.started_at.isoformat()}, "qa_history": qa_history})
+    return jsonify({
+        "status": "success", 
+        "session": {
+            "job_role": session.job_role, 
+            "started_at": session.started_at.isoformat()
+        }, 
+        "qa_history": qa_history
+    })
 
 @app.route('/api/interviews', methods=['GET'])
 @token_required
@@ -495,80 +564,89 @@ def get_feedback_pdf(current_user, session_id):
 @token_required
 def evaluate_session(current_user, session_id):
     try:
-        session = db.session.get(InterviewSession, session_id)
-        if not session: return jsonify({"error": "Session not found"}), 404
-        
         data = request.get_json() or {}
-        snapshots_data = data.get('snapshots', [])
-        
-        if snapshots_data:
-            os.makedirs('uploads/snapshots', exist_ok=True)
-            for i, snap_b64 in enumerate(snapshots_data):
+        snapshots = data.get('snapshots', [])
+
+        saved_snapshots = []
+        if snapshots:
+            upload_folder = app.config.get('UPLOAD_FOLDER', os.path.join(app.root_path, 'uploads'))
+            upload_dir = os.path.join(upload_folder, f'session_{session_id}')
+            os.makedirs(upload_dir, exist_ok=True)
+            for i, snap in enumerate(snapshots):
                 try:
-                    if ',' in snap_b64:
-                        header, encoded = snap_b64.split(',', 1)
-                        binary_data = base64.b64decode(encoded)
-                        filename = f"session_{session_id}_snap_{i}.jpg"
-                        filepath = os.path.join('uploads/snapshots', filename)
-                        with open(filepath, 'wb') as f: f.write(binary_data)
-                        db.session.add(Snapshot(session_id=session_id, image_path=filepath))
-                except Exception as e:
-                    logger.error(f"Error saving snapshot {i}: {e}")
+                    image_data = snap.split(',')[1] if ',' in snap else snap
+                    file_path = os.path.join(upload_dir, f'snapshot_{i}.jpg')
+                    with open(file_path, 'wb') as f:
+                        f.write(base64.b64decode(image_data))
+                    # ✅ FIX 2: Return the secure API route instead of direct file path
+                    saved_snapshots.append(f'/api/admin/snapshots/{session_id}/snapshot_{i}.jpg')
+                except Exception as img_err:
+                    app.logger.warning(f"Failed to save snapshot {i}: {img_err}")
 
-        questions = Question.query.filter_by(session_id=session_id).all()
-        qa_pairs = [{"question": q.question_text, "answer": Response.query.filter_by(question_id=q.question_id).first().answer_text if Response.query.filter_by(question_id=q.question_id).first() else "No answer"} for q in questions]
-        if not qa_pairs: return jsonify({"error": "No questions found"}), 400
+        session = InterviewSession.query.filter_by(
+            session_id=session_id, user_id=current_user.user_id
+        ).first()
+        if not session:
+            return jsonify({"error": "Session not found"}), 404
 
-        resume_context = get_resume_context(current_user.user_id)
-        feedback_data = evaluate_interview(qa_pairs, session.job_role, resume_context)
-        
-        feedback = Feedback.query.filter_by(session_id=session_id).first()
-        if not feedback:
-            feedback = Feedback(session_id=session_id, user_id=current_user.user_id)
-            db.session.add(feedback)
-            
-        feedback.technical_score = int(feedback_data.get("technical_score", 5))
-        feedback.behavioral_score = int(feedback_data.get("behavioral_score", 5))
-        feedback.strengths = str(feedback_data.get("strengths", ""))
-        feedback.weaknesses = str(feedback_data.get("weaknesses", ""))
-        feedback.career_recommendations = str(feedback_data.get("career_recommendations", ""))
-        
+        chat_history = getattr(session, 'chat_history', None) or getattr(session, 'transcript', None) or []
+        resume_context = getattr(session, 'resume_context', '') or ''
+        job_role = getattr(session, 'job_role', 'Software Engineer') or 'Software Engineer'
+
+        from agents.evaluator import evaluate_interview
+        feedback_data = evaluate_interview(
+            qa_pairs=chat_history, job_role=job_role, resume_context=resume_context
+        )
+
+        existing_feedback = Feedback.query.filter_by(session_id=session_id).first()
+
+        if existing_feedback:
+            existing_feedback.technical_score = feedback_data.get("technical_score", 0)
+            existing_feedback.behavioral_score = feedback_data.get("behavioral_score", 0)
+            existing_feedback.strengths = feedback_data.get("strengths", "")
+            existing_feedback.weaknesses = feedback_data.get("weaknesses", "")
+            existing_feedback.career_recommendations = feedback_data.get("career_recommendations", "")
+            db.session.commit()
+            feedback_obj = existing_feedback
+        else:
+            new_feedback = Feedback(
+                session_id=session_id,
+                user_id=current_user.user_id,
+                technical_score=feedback_data.get("technical_score", 0),
+                behavioral_score=feedback_data.get("behavioral_score", 0),
+                strengths=feedback_data.get("strengths", ""),
+                weaknesses=feedback_data.get("weaknesses", ""),
+                career_recommendations=feedback_data.get("career_recommendations", ""),
+                admin_override=False
+            )
+            db.session.add(new_feedback)
+            db.session.commit()
+            feedback_obj = new_feedback
+
         session.status = 'completed'
         db.session.commit()
 
-        user = current_user
-        try:
-            pdf = FPDF()
-            pdf.add_page()
-            pdf.set_font("Arial", 'B', 16)
-            pdf.cell(0, 10, "Interview Feedback Report", ln=True, align='C')
-            pdf.ln(10)
-            pdf.set_font("Arial", size=12)
-            pdf.cell(0, 10, f"Role: {session.job_role}", ln=True)
-            pdf.cell(0, 10, f"Technical Score: {feedback.technical_score}/10", ln=True)
-            pdf.cell(0, 10, f"Behavioral Score: {feedback.behavioral_score}/10", ln=True)
-            pdf.ln(5)
-            pdf.set_font("Arial", 'B', 12)
-            pdf.cell(0, 10, "Strengths:", ln=True)
-            pdf.set_font("Arial", size=11)
-            pdf.multi_cell(0, 10, feedback.strengths)
-            pdf.set_font("Arial", 'B', 12)
-            pdf.cell(0, 10, "Weaknesses:", ln=True)
-            pdf.set_font("Arial", size=11)
-            pdf.multi_cell(0, 10, feedback.weaknesses)
-            pdf_data = pdf.output(dest='S').encode('latin-1')
-        except Exception as e:
-            logger.error(f"PDF Generation Error: {e}")
-            pdf_data = None
+        app.logger.info(f"Session {session_id} evaluated. {len(saved_snapshots)} snapshots saved to disk.")
 
-        email_body = f"""Hi {user.name},\n\nYour interview for {session.job_role} is complete!\n\nTechnical Score: {feedback.technical_score}/10\nBehavioral Score: {feedback.behavioral_score}/10\n\nPlease find your detailed Feedback Report attached to this email.\n\nBest regards,\nMulti-Agent Interview System Team"""
-        send_email("Your AI Interview Feedback is Ready!", user.email, email_body, attachment_data=pdf_data, attachment_name=f"Feedback_{session.job_role.replace(' ', '_')}.pdf")
-        
-        return jsonify({"status": "success", "feedback": feedback_data})
-    except Exception as e: 
-        app.logger.exception("Error in evaluate")
-        return jsonify({"error": "Something went wrong. Please try again."}), 500
+        return jsonify({
+            "status": "success",
+            "message": "Interview evaluated successfully!",
+            "data": {
+                "feedback_id": feedback_obj.feedback_id,
+                "technical_score": feedback_obj.technical_score,
+                "behavioral_score": feedback_obj.behavioral_score,
+                "strengths": feedback_obj.strengths,
+                "weaknesses": feedback_obj.weaknesses,
+                "career_recommendations": feedback_obj.career_recommendations,
+                "snapshots": saved_snapshots
+            }
+        }), 200
 
+    except Exception as e:
+        db.session.rollback()
+        app.logger.exception(f"Error evaluating session {session_id}")
+        return jsonify({"error": "Failed to evaluate interview. Please try again."}), 500
+            
 # ==============================================================================
 # ADMIN ROUTES (Protected)
 # ==============================================================================
@@ -676,7 +754,6 @@ def override_score(current_user, session_id):
 # PROCTORING & SETTINGS ROUTES
 # ==============================================================================
 
-# Task 6: Add POST /api/violation
 @app.route('/api/violation', methods=['POST'])
 @token_required
 def log_violation(current_user):
@@ -700,7 +777,6 @@ def log_violation(current_user):
         app.logger.exception("Error logging violation")
         return jsonify({"error": "Something went wrong. Please try again."}), 500
 
-# Task 7: Add GET /api/proctoring-config
 @app.route('/api/proctoring-config', methods=['GET'])
 @token_required
 def get_proctoring_config(current_user):
@@ -764,18 +840,43 @@ def get_proctoring_evidence(current_user, session_id):
         qa_history = [{"question": q.question_text, "answer": Response.query.filter_by(question_id=q.question_id).first().answer_text if Response.query.filter_by(question_id=q.question_id).first() else "No answer provided"} for q in questions]
         violations = Violation.query.filter_by(session_id=session_id).all()
         violation_logs = [{"time": v.timestamp.strftime("%H:%M:%S"), "type": v.violation_type, "description": v.description} for v in violations]
-        real_snapshots = Snapshot.query.filter_by(session_id=session_id).order_by(Snapshot.timestamp.asc()).all()
+        
+        # ✅ FIX 3: Read snapshots directly from disk instead of relying on empty Snapshot DB table
+        upload_folder = app.config.get('UPLOAD_FOLDER', os.path.join(app.root_path, 'uploads'))
+        session_upload_dir = os.path.join(upload_folder, f'session_{session_id}')
         snapshot_gallery = []
         has_violations = len(violation_logs) > 0
-        for i, snap in enumerate(real_snapshots):
-            is_flagged = has_violations and (i % 2 == 1)
-            snapshot_gallery.append({"id": snap.id, "timestamp": snap.timestamp.strftime("%H:%M:%S"), "image_url": f"http://127.0.0.1:5000/{snap.image_path.replace(os.sep, '/')}", "flagged": is_flagged, "reason": "Flagged due to session violations" if is_flagged else "Normal"})
+        
+        if os.path.exists(session_upload_dir):
+            files = sorted([f for f in os.listdir(session_upload_dir) if f.endswith('.jpg')])
+            for i, filename in enumerate(files):
+                is_flagged = has_violations and (i % 2 == 1)
+                snapshot_gallery.append({
+                    "id": i + 1,
+                    "timestamp": "Captured", 
+                    "image_url": f"/api/admin/snapshots/{session_id}/{filename}", # ✅ Secure API URL
+                    "flagged": is_flagged,
+                    "reason": "Flagged due to session violations" if is_flagged else "Normal"
+                })
+        
+        # Fallback if no snapshots on disk yet
         if not snapshot_gallery and session.started_at:
             base_time = session.started_at
             for i in range(4):
                 snap_time = base_time + datetime.timedelta(minutes=5 * (i + 1))
                 snapshot_gallery.append({"id": i + 1, "timestamp": snap_time.strftime("%H:%M:%S"), "image_url": None, "flagged": i == 1 or i == 3, "reason": "Tab switch detected" if i == 1 else "Gaze diverted from screen" if i == 3 else "Normal"})
-        return jsonify({"status": "success", "data": {"candidate_name": user.name if user else "Unknown", "candidate_email": user.email if user else "Unknown", "job_role": session.job_role, "qa_history": qa_history, "violation_logs": violation_logs, "snapshot_gallery": snapshot_gallery}})
+                
+        return jsonify({
+            "status": "success", 
+            "data": {
+                "candidate_name": user.name if user else "Unknown", 
+                "candidate_email": user.email if user else "Unknown", 
+                "job_role": session.job_role, 
+                "qa_history": qa_history, 
+                "violation_logs": violation_logs, 
+                "snapshot_gallery": snapshot_gallery
+            }
+        })
     except Exception as e:
         app.logger.exception("Error in get_proctoring_evidence")
         return jsonify({"error": "Something went wrong. Please try again."}), 500
@@ -875,7 +976,6 @@ def get_user_stats_for_admin(current_user, user_id):
         app.logger.exception("Error in get_user_stats_for_admin")
         return jsonify({"error": "Something went wrong. Please try again."}), 500
     
-# Task 1: Add @admin_required to promote_to_admin
 @app.route('/api/dev/promote-to-admin', methods=['POST'])
 @admin_required
 def promote_to_admin(current_user):

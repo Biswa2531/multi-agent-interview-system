@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import api from '../api' // ✅ Centralized API instance (auto-attaches JWT, handles 401)
 import toast from 'react-hot-toast'
 import { jsPDF } from "jspdf"
+import SnapshotImage from '../components/SnapshotImage' // ✅ NEW: Authenticated image loader
 
 function AdminProctoring() {
   const [logs, setLogs] = useState([])
@@ -15,7 +16,6 @@ function AdminProctoring() {
 
   useEffect(() => { fetchLogs() }, [])
 
-  // ✅ No more token header, no more hardcoded URL
   const fetchLogs = async () => {
     try {
       const res = await api.get('/api/admin/proctoring')
@@ -27,7 +27,6 @@ function AdminProctoring() {
     }
   }
 
-  // ✅ Clean POST call — api.js auto-attaches the Authorization header
   const handleFlag = async (sessionId, candidateName) => {
     if (!window.confirm(`Are you sure you want to flag this session for ${candidateName}?`)) return
     try {
@@ -42,7 +41,6 @@ function AdminProctoring() {
     }
   }
 
-  // ✅ Clean GET call with dynamic path
   const fetchEvidence = async (sessionId) => {
     setIsEvidenceLoading(true)
     setIsEvidenceOpen(true)
@@ -56,7 +54,6 @@ function AdminProctoring() {
     }
   }
 
-  // ✅ PDF generation logic stays 100% unchanged (no API calls here)
   const generatePDFReport = () => {
     if (!evidenceData) return;
     const doc = new jsPDF();
@@ -303,8 +300,9 @@ function AdminProctoring() {
                         {evidenceData.snapshot_gallery.map((snap) => (
                           <div key={snap.id} className={`relative rounded-lg overflow-hidden border-2 ${snap.flagged ? 'border-red-500 shadow-lg shadow-red-500/20' : 'border-slate-600'}`}>
                             <div className="aspect-video bg-slate-900 flex items-center justify-center relative">
+                              {/* ✅ FIX: Replaced standard <img> with authenticated SnapshotImage component */}
                               {snap.image_url ? (
-                                <img src={snap.image_url} alt={`Snapshot ${snap.id}`} className="w-full h-full object-cover" />
+                                <SnapshotImage url={snap.image_url} />
                               ) : (
                                 <>
                                   <div className="absolute inset-0 bg-gradient-to-br from-slate-800 to-slate-900"></div>

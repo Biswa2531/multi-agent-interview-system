@@ -85,7 +85,7 @@ This is the fastest and most reliable way to run the entire stack (Frontend, Bac
    # Database (Docker network defaults)
    DATABASE_URL=postgresql://postgres:postgres@interview_db:5432/interview_db
 
-   GROQ_MODEL=qwen-model
+   GROQ_MODEL=qwen/qwen3.8-27b
    FRONTEND_URL=http://localhost:5173
 
    # AI & RAG
