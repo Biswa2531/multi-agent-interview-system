@@ -23,6 +23,8 @@ An enterprise-grade, full-stack interview simulation platform that leverages **M
 - **2FA Email OTP Authentication:** Secure signup/login/forgot-password flows using `Flask-Mail` with hashed, time-bound (5-min) OTPs and strict attempt limits to prevent brute-force attacks.
 - **Anti-Cheat Measures:** Copy/paste (Ctrl+C/V) and right-click disabled during active sessions; microphone audio visualizer confirms active listening.
 - **Role-Based Access Control (RBAC):** Strict JWT-protected separation of Candidate and Admin portals with dedicated `ProtectedRoute` wrappers.
+- **Dynamic Proctoring Configuration:** Frontend fetches `/api/proctoring-config` on load to respect admin-controlled `max_violations` and `webcam_enabled` settings.
+- **Server-Side Violation Logging:** All tab-switch/blur events are persisted to PostgreSQL via `POST /api/violation` with automatic interview termination on threshold breach.
 
 ### ⚙️ Robust Backend & DevOps
 - **Secure File Uploads:** Validates PDF "magic bytes", enforces size limits, and uses UUIDs to prevent directory traversal and filename clashes.
@@ -82,6 +84,9 @@ This is the fastest and most reliable way to run the entire stack (Frontend, Bac
    ```env
    # Database (Docker network defaults)
    DATABASE_URL=postgresql://postgres:postgres@interview_db:5432/interview_db
+
+   GROQ_MODEL=qwen-model
+   FRONTEND_URL=http://localhost:5173
 
    # AI & RAG
    GROQ_API_KEY=your_groq_api_key_here
