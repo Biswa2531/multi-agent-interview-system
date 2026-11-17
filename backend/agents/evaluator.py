@@ -11,10 +11,11 @@ env_file = backend_dir / '.env'
 load_dotenv(dotenv_path=env_file)
 
 def evaluate_interview(qa_pairs, job_role, resume_context=""):
+    # ✅ Configurable via env var, but defaults to your working model
     llm = ChatGroq(
-        model="qwen/qwen3.8-27b",
+        model=os.getenv('GROQ_MODEL', 'qwen/qwen3.8-27b'),
         api_key=os.getenv("GROQ_API_KEY"),
-        temperature=0.3, # Low temp for objective, consistent grading
+        temperature=0.3,
         max_tokens=800
     )
 

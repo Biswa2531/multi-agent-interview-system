@@ -1,16 +1,23 @@
 import os
 from dotenv import load_dotenv
 
-# Load environment variables from the .env file
+# Load environment variables from the .env file (for local development)
 load_dotenv()
 
 class Config:
-    # 1. SECRET KEY: Required for JWT Authentication (Login/Signup)
-    SECRET_KEY = os.getenv('SECRET_KEY', 'super-secret-key-for-jwt-2026')
+    # 1. Enforce SECRET_KEY from environment variables (NO fallback)
+    SECRET_KEY = os.environ.get('SECRET_KEY')
+    if not SECRET_KEY:
+        raise ValueError("No SECRET_KEY set for Flask application. Did you forget to set the environment variable?")
     
-    # 2. DATABASE: Pointing to PostgreSQL (as per Week 4 migration)
-    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', 'postgresql+psycopg2://postgres:postgre123@localhost:5432/interview_system')
+    # 2. Enforce DATABASE_URL from environment variables (NO fallback)
+    DATABASE_URL = os.environ.get('DATABASE_URL')
+    if not DATABASE_URL:
+        raise ValueError("No DATABASE_URL set for Flask application. Did you forget to set the environment variable?")
+
+    # SQLAlchemy Configuration
+    SQLALCHEMY_DATABASE_URI = DATABASE_URL
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     
-    # 3. API Keys (Fixed the variable name here!)
-    GROQ_API_KEY = os.getenv('GROQ_API_KEY')
+    # 3. API Keys
+    GROQ_API_KEY = os.environ.get('GROQ_API_KEY')

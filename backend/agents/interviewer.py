@@ -10,16 +10,15 @@ load_dotenv(dotenv_path=env_file)
 
 def get_interviewer_response(user_message, job_role="Software Engineer", chat_history=[], resume_context="", current_round=1):
     
-    # Keep your fast model and settings
+    # ✅ Configurable via env var, but defaults to your working model
     llm = ChatGroq(
-        model="qwen/qwen3.8-27b",  # Keeping your working model
+        model=os.getenv('GROQ_MODEL', 'qwen/qwen3.8-27b'),
         api_key=os.getenv("GROQ_API_KEY"),
         temperature=0.7,
-        max_tokens=150 # Slightly increased to allow room for RAG context
+        max_tokens=150
     )
 
     # --- RAG INTEGRATION ---
-    # Use up to 1000 chars of resume context (300 was too short for the AI to understand skills)
     context_section = ""
     if resume_context and resume_context != "No resume context found.":
         context_section = f"\n\nCANDIDATE RESUME CONTEXT:\n{resume_context[:1000]}\n---\n"
@@ -48,11 +47,9 @@ def get_interviewer_response(user_message, job_role="Software Engineer", chat_hi
 
     messages = [SystemMessage(content=system_prompt)]
     
-    # Keep your exact history parsing to prevent crashes
     recent_history = chat_history[-6:] if len(chat_history) > 6 else chat_history
 
     for msg in recent_history:
-        # BULLETPROOF SAFETY CHECK: Prevents the Week 4 crash
         if isinstance(msg, dict):
             role = msg.get('role')
             text = msg.get('text', '')
