@@ -4,7 +4,6 @@ __pycache__/
 *$py.class
 venv/
 .venv/
-.env
 *.egg-info/
 dist/
 build/
@@ -27,10 +26,14 @@ yarn-error.log*
 *.sqlite
 
 # Project Specific
-chroma_db_storage/
-uploads/
-create_db.pybackend/chroma_db/
+backend/chroma_db/
 backend/uploads/
 frontend/node_modules/
+frontend/dist/
 backend/.env
+frontend/.env
+create_db.py
+check_models.py
+update_db.py
+reset_db.py
 *.log
