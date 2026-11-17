@@ -3,6 +3,9 @@ import { Toaster } from 'react-hot-toast'
 import Navbar from './components/Navbar'
 import AdminLayout from './components/AdminLayout'
 
+// Security Wrapper
+import ProtectedRoute from './components/ProtectedRoute'
+
 // Auth Pages
 import Login from './pages/Login'
 import Signup from './pages/Signup'
@@ -30,26 +33,30 @@ function Layout() {
     <>
       {!hideNavbar && !isAdminRoute && <Navbar />}
       <Routes>
-        <Route path="/" element={<Navigate to="/login" />} />
+        <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
         <Route path="/verify-otp" element={<VerifyOTP />} />
         
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/interview" element={<Interview />} />
-        <Route path="/feedback/:id" element={<Feedback />} />
-        <Route path="/profile" element={<Profile />} />
+        {/* ✅ Task 12: Protected Candidate Routes */}
+        <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+        <Route path="/interview" element={<ProtectedRoute><Interview /></ProtectedRoute>} />
+        <Route path="/feedback/:id" element={<ProtectedRoute><Feedback /></ProtectedRoute>} />
+        <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
         
-        {/* Admin Routes wrapped in AdminLayout */}
-        <Route path="/admin" element={<AdminLayout />}>
-          <Route index element={<Navigate to="dashboard" />} />
+        {/* ✅ Task 12: Protected Admin Routes (adminOnly) */}
+        <Route path="/admin" element={<ProtectedRoute adminOnly><AdminLayout /></ProtectedRoute>}>
+          <Route index element={<Navigate to="dashboard" replace />} />
           <Route path="dashboard" element={<AdminDashboard />} />
           <Route path="users" element={<AdminUsers />} />
           <Route path="interviews" element={<AdminInterviews />} />
           <Route path="proctoring" element={<AdminProctoring />} /> 
           <Route path="settings" element={<AdminSettings />} /> 
-          <Route path="settings" element={<div className="text-slate-800 dark:text-white text-xl font-bold">Settings Module (Coming Soon)</div>} />
+          {/* ✅ Task 13: Removed the duplicate "Coming Soon" settings route */}
         </Route>
+
+        {/* Catch-all Fallback */}
+        <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </>
   )

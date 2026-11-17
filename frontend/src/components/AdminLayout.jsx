@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom'
 import StarryBackground from './StarryBackground'
 
@@ -5,6 +6,16 @@ function AdminLayout() {
   const location = useLocation()
   const navigate = useNavigate()
   const user = JSON.parse(localStorage.getItem('user')) || {}
+
+  // ✅ Task 14: Redirect to login if the stored user is not an admin
+  useEffect(() => {
+    if (user.role !== 'admin') {
+      navigate('/login', { replace: true })
+    }
+  }, [user.role, navigate])
+
+  // Prevent rendering anything if not admin (stops flash of content)
+  if (user.role !== 'admin') return null
 
   const handleLogout = () => {
     localStorage.removeItem('token')
