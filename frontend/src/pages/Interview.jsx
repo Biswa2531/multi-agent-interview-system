@@ -41,6 +41,9 @@ function Interview() {
   const [techScore, setTechScore] = useState(0)
   const [behavScore, setBehavScore] = useState(0)
 
+  // ✅ Task 15: State for dynamic proctoring config
+  const [proctoringConfig, setProctoringConfig] = useState({ max_violations: 3, webcam_enabled: true })
+
   const [isListening, setIsListening] = useState(false)
   const [audioLevels, setAudioLevels] = useState(Array(8).fill(0))
   const audioContextRef = useRef(null)
@@ -130,7 +133,7 @@ function Interview() {
     }
   }
 
-  // ✅ UPDATED: Centralized function to submit interview data using api.js
+  // ✅ Centralized function to submit interview data using api.js (Moved ABOVE useEffect to prevent closure issues)
   const submitInterviewData = async (currentSnapshots, isAutoSubmit = false) => {
     setIsLoading(true);
     try {
@@ -151,7 +154,7 @@ function Interview() {
       
       // 1. Call the backend to evaluate the session AND send the real snapshots
       await api.post(`/api/evaluate/${currentSessionId}`, {
-        snapshots: currentSnapshots // Send the base64 images here!
+        snapshots: currentSnapshots
       });
       
       if (isAutoSubmit) {
@@ -176,6 +179,17 @@ function Interview() {
     const token = localStorage.getItem('token')
     if (!token) { navigate('/') }
     
+    // ✅ Task 15: Fetch proctoring config on load
+    const fetchProctoringConfig = async () => {
+      try {
+        const res = await api.get('/api/proctoring-config')
+        setProctoringConfig(res.data.data)
+      } catch (err) {
+        console.error('Failed to fetch proctoring config', err)
+      }
+    }
+    fetchProctoringConfig()
+
     if (sessionId) {
       addLog('info', `Resuming session: ${sessionId}`)
     } else {
@@ -187,7 +201,14 @@ function Interview() {
 
     let snapshotInterval;
     let stream;
+    
     const initWebcam = async () => {
+      // ✅ Task 15: Only start the camera if the admin has enabled it
+      if (!proctoringConfig.webcam_enabled) {
+        addLog('info', 'Webcam proctoring is disabled by admin settings.')
+        return
+      }
+
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: true })
         setWebcamActive(true)
@@ -219,22 +240,44 @@ function Interview() {
     }
     initWebcam()
 
-    const handleVisibilityChange = () => {
+    // ✅ Task 15: Updated violation logic to call API and auto-submit on max violations
+    const handleVisibilityChange = async () => {
       if (document.hidden && interviewStartedRef.current) {
-        setViolations(prev => {
-          const newViolations = prev + 1
-          addLog('error', `VIOLATION DETECTED: Tab switch or window minimize! (${newViolations}/3)`)
-          toast.error(`⚠️ Warning: Tab switch detected! (${newViolations}/3)`)
-          
-          // FIX: If 3 violations, call submitInterviewData to save status and snapshots, then navigate
-          if (newViolations >= 3) { 
-              toast.error('Maximum violations reached. Auto-submitting interview...'); 
-              setTimeout(() => submitInterviewData(snapshots, true), 2000); 
+        try {
+          let currentSessionId = sessionId;
+          if (!currentSessionId) {
+            const res = await api.get('/api/interviews');
+            const activeSession = res.data.data.find(s => s.status === 'in_progress');
+            if (activeSession) {
+                currentSessionId = activeSession.session_id;
+            } else {
+                return; // No active session to log violation against
+            }
           }
-          return newViolations
-        })
+
+          // Log violation via centralized API
+          const res = await api.post('/api/violation', {
+            session_id: currentSessionId,
+            type: 'tab_switch',
+            details: 'Candidate switched tabs or minimized the window'
+          })
+          
+          const newCount = res.data.violation_count
+          setViolations(newCount)
+          addLog('error', `VIOLATION DETECTED: Tab switch or window minimize! (${newCount}/${proctoringConfig.max_violations})`)
+          toast.error(`⚠️ Warning: Tab switch detected! (${newCount}/${proctoringConfig.max_violations})`)
+          
+          // Auto-end interview if max violations reached
+          if (newCount >= proctoringConfig.max_violations) {
+            toast.error('Maximum violations reached. Auto-submitting interview...')
+            setTimeout(() => submitInterviewData(snapshots, true), 2000)
+          }
+        } catch (err) {
+          console.error('Failed to log violation', err)
+        }
       }
     }
+    
     document.addEventListener('visibilitychange', handleVisibilityChange)
 
     return () => {
@@ -245,7 +288,7 @@ function Interview() {
       if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop())
       if (audioContextRef.current) audioContextRef.current.close()
     }
-  }, [])
+  }, [proctoringConfig.webcam_enabled]) // Added dependency
 
   useEffect(() => {
     if (messages.length === 1 && messages[0].role === 'ai') {
@@ -305,7 +348,6 @@ function Interview() {
     submitInterviewData(snapshots, false);
   };
 
-  // ✅ UPDATED: handleSend using api.js
   const handleSend = async () => {
     if (!input.trim() || isLoading) return
     if (!interviewStarted) { setInterviewStarted(true); addLog('success', 'Timer started. Interview is now live.') }
@@ -372,7 +414,7 @@ function Interview() {
 
               {violations > 0 && (
                 <div className="text-sm font-bold px-3 py-1.5 rounded-lg border bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 border-red-300 dark:border-red-800 animate-pulse">
-                  ⚠️ {violations}/3 Violations
+                  ⚠️ {violations}/{proctoringConfig.max_violations} Violations
                 </div>
               )}
 
@@ -515,7 +557,7 @@ function Interview() {
             )}
           </div>
 
-          <div className="w-80 flex flex-col gap-4 shrink-0">
+          <div className="w-full md:w-80 flex flex-col gap-4 shrink-0">
             
             <div className="glass-card rounded-2xl p-4 space-y-3">
               <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">Active Agents</h3>
