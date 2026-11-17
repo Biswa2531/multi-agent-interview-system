@@ -29,4 +29,8 @@ yarn-error.log*
 # Project Specific
 chroma_db_storage/
 uploads/
-create_db.py
+create_db.pybackend/chroma_db/
+backend/uploads/
+frontend/node_modules/
+backend/.env
+*.log
