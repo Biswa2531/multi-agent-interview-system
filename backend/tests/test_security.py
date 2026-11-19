@@ -93,7 +93,7 @@ def test_snapshots_require_admin(client):
     
     # Ideally it should be 401 (Unauthorized)
     assert response.status_code in [401, 403, 404], f"Expected 401/403/404, but got {response.status_code}"
-    
+
 def test_violation_endpoint_requires_auth(client):
     """PROOF: /api/violation requires authentication to log a violation."""
     response = client.post('/api/violation', json={'session_id': 1, 'type': 'tab_switch', 'details': 'Test'})
@@ -106,3 +106,4 @@ def test_proctoring_config_returns_settings(client, auth_headers):
     data = response.get_json()
     assert 'max_violations' in data['data'], "Response should contain max_violations!"
     assert 'webcam_enabled' in data['data'], "Response should contain webcam_enabled!"
+    
