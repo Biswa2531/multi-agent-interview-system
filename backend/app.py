@@ -172,18 +172,19 @@ def signup():
         ))
         db.session.commit()
         
-        # ✅ FIX: Check if email actually sent, fallback to DEV MODE if it fails
+        # ✅ SECURE: Check if email actually sent
         email_sent = send_email("Your Interview App OTP", email, f"Your OTP for signup is: {otp_code}. It expires in 5 minutes.")
         if email_sent:
             return jsonify({"status": "success", "message": "OTP sent to email!"})
         else:
+            # OTP stays in server logs ONLY. Client gets a generic error.
             print(f"[DEV MODE] Signup OTP for {email} is: {otp_code}")
-            return jsonify({"status": "success", "message": f"Email failed. [DEV MODE] OTP: {otp_code}"})
+            return jsonify({"error": "Could not send email. Please try again later."}), 500
             
     except Exception as e:
         app.logger.exception("Signup Error")
         return jsonify({"error": "Something went wrong. Please try again."}), 500
-    
+        
 @app.route('/api/verify-signup-otp', methods=['POST'])
 @limiter.limit("5 per minute")
 def verify_signup_otp():
@@ -239,15 +240,19 @@ def login():
         ))
         db.session.commit()
         
+        # ✅ SECURE: Check if email actually sent
         email_sent = send_email("Your Login OTP", email, f"Your OTP for login is: {otp_code}.")
-        if email_sent: return jsonify({"status": "success", "message": "OTP sent to email!"})
+        if email_sent: 
+            return jsonify({"status": "success", "message": "OTP sent to email!"})
         else:
+            # OTP stays in server logs ONLY. Client gets a generic error.
             print(f"[DEV MODE] Login OTP for {email} is: {otp_code}")
-            return jsonify({"status": "success", "message": f"Email failed. [DEV MODE] OTP: {otp_code}"})
+            return jsonify({"error": "Could not send email. Please try again later."}), 500
+            
     except Exception as e:
         app.logger.exception("Login Error")
         return jsonify({"error": "Something went wrong. Please try again."}), 500
-
+    
 @app.route('/api/verify-login-otp', methods=['POST'])
 @limiter.limit("5 per minute")
 def verify_login_otp():
@@ -298,7 +303,7 @@ def forgot_password_request():
         otp_code = str(random.randint(100000, 999999))
         expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=5)
         
-        # ✅ FIX: Save to OTPCode table with type='reset' (secure, expires, tracks attempts)
+        # ✅ Save to OTPCode table with type='reset'
         db.session.add(OTPCode(
             email=email, 
             code_hash=generate_otp_hash(otp_code), 
@@ -308,17 +313,18 @@ def forgot_password_request():
         ))
         db.session.commit()
         
-        # ✅ FIX: Check if email actually sent
+        # ✅ SECURE: Check if email actually sent
         email_sent = send_email("Your Password Reset OTP", email, f"Your OTP for password reset is: {otp_code}. It expires in 5 minutes.")
         if email_sent:
             return jsonify({"status": "success", "message": "OTP sent to email!"})
         else:
+            # OTP stays in server logs ONLY. Client gets a generic error.
             print(f"[DEV MODE] Password Reset OTP for {email} is: {otp_code}")
-            return jsonify({"status": "success", "message": f"Email failed. [DEV MODE] OTP: {otp_code}"})
+            return jsonify({"error": "Could not send email. Please try again later."}), 500
             
     except Exception as e: 
         app.logger.exception("Forgot Password Request Error")
-        return jsonify({"error": "Something went wrong. Please try again."}), 500
+        return jsonify({"error": "Something went wrong. Please try again."}), 500    
     
 @app.route('/api/forgot-password-verify', methods=['POST'])
 @limiter.limit("5 per minute")
