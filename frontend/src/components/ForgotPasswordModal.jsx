@@ -12,7 +12,6 @@ function ForgotPasswordModal({ isOpen, onClose }) {
 
   if (!isOpen) return null
 
-  // ✅ Clean POST call: No URL, no headers needed!
   const handleSendOTP = async () => {
     if (!email) return toast.error('Please enter your email')
     setIsLoading(true)
@@ -27,14 +26,28 @@ function ForgotPasswordModal({ isOpen, onClose }) {
     }
   }
 
-  // ✅ Clean POST call: No URL, no headers needed!
-  const handleVerifyAndReset = async () => {
+  // ✅ NEW: Actually verify the OTP with the backend before moving to Step 3
+  const handleVerifyOTP = async () => {
     if (otp.length !== 6) return toast.error('Please enter a valid 6-digit OTP')
+    setIsLoading(true)
+    try {
+      await api.post('/api/forgot-password-verify-otp', { email, otp })
+      toast.success('OTP verified successfully!')
+      setStep(3)
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Invalid OTP')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleVerifyAndReset = async () => {
     if (newPassword !== confirmPassword) return toast.error('Passwords do not match')
     if (newPassword.length < 6) return toast.error('Password must be at least 6 characters')
     
     setIsLoading(true)
     try {
+      // We still send the OTP here so the backend can securely consume/delete the record
       const res = await api.post('/api/forgot-password-verify', { email, otp, new_password: newPassword })
       toast.success(res.data.message)
       setStep(4)
@@ -71,7 +84,12 @@ function ForgotPasswordModal({ isOpen, onClose }) {
           <div className="space-y-4">
             <p className="text-sm text-slate-600 dark:text-slate-400 text-center">Enter the 6-digit OTP sent to <span className="font-bold text-cyan-500">{email}</span></p>
             <input type="text" value={otp} onChange={(e) => setOtp(e.target.value)} placeholder="Enter 6-digit OTP" maxLength="6" className="glass-input w-full px-4 py-3 rounded-lg text-sm text-center tracking-widest font-mono" />
-            <button onClick={() => setStep(3)} className="w-full bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-bold py-3 rounded-lg">Next</button>
+            
+            {/* ✅ FIXED: Calls backend to verify instead of blindly advancing */}
+            <button onClick={handleVerifyOTP} disabled={isLoading} className="w-full bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-bold py-3 rounded-lg disabled:opacity-50">
+              {isLoading ? 'Verifying...' : 'Verify OTP'}
+            </button>
+            
             <button onClick={() => setStep(1)} className="w-full text-sm text-slate-500 hover:text-cyan-500">Change Email</button>
           </div>
         )}
