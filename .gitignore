@@ -36,4 +36,5 @@ create_db.py
 check_models.py
 update_db.py
 reset_db.py
-*.logbackend/chroma_db_storage/
+*.log
+backend/chroma_db_storage/
