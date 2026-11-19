@@ -81,9 +81,16 @@ def test_promote_to_admin_blocked_for_non_admins(client):
     assert response.status_code == 401, "Promote route should block unauthenticated users!"
 
 def test_snapshots_require_admin(client):
-    """PROOF: Snapshot serving route requires authentication (and admin role)."""
-    response = client.get('/uploads/snapshots/fake_image.jpg')
-    assert response.status_code == 401, "Snapshot route should block unauthenticated users!"
+    """
+    Test that the new secure snapshot route requires admin authentication.
+    Since we moved snapshots behind @admin_required, unauthenticated requests 
+    must return 401 Unauthorized.
+    """
+    # ✅ Updated to the new secure API route
+    response = client.get('/api/admin/snapshots/1/fake_image.jpg')
+    
+    # Should return 401 (Unauthorized) because no JWT token is provided in the test client
+    assert response.status_code == 401
 
 def test_violation_endpoint_requires_auth(client):
     """PROOF: /api/violation requires authentication to log a violation."""
