@@ -107,19 +107,26 @@ def admin_required(f):
     return decorated
 
 def send_email(subject, recipient, body, attachment_data=None, attachment_name=None):
+    # ✅ 1. Check if email is disabled via env var (prevents hanging if False)
+    if os.getenv('MAIL_ENABLED', 'True').lower() != 'true':
+        logger.info(f"[EMAIL DISABLED] Skipping send to {recipient}. Subject: {subject}")
+        return False
+
     try:
+        # ✅ 2. Wrap in app_context so Flask-Mail works in Gunicorn threads
         with app.app_context():
             sender_name = f"Multi-Agent Interview System <{app.config['MAIL_USERNAME']}>"
             msg = Message(subject, sender=sender_name, recipients=[recipient])
             msg.body = body
             if attachment_data:
                 msg.attach(attachment_name, "application/pdf", attachment_data)
+            
             mail.send(msg)
             return True
     except Exception as e:
         logger.error(f"[EMAIL ERROR] Failed to send to {recipient}: {e}")
         return False
-                
+                    
 def generate_otp_hash(code):
     return hashlib.sha256(code.encode()).hexdigest()
 
@@ -165,12 +172,18 @@ def signup():
         ))
         db.session.commit()
         
-        send_email("Your Interview App OTP", email, f"Your OTP for signup is: {otp_code}. It expires in 5 minutes.")
-        return jsonify({"status": "success", "message": "OTP sent to email!"})
+        # ✅ FIX: Check if email actually sent, fallback to DEV MODE if it fails
+        email_sent = send_email("Your Interview App OTP", email, f"Your OTP for signup is: {otp_code}. It expires in 5 minutes.")
+        if email_sent:
+            return jsonify({"status": "success", "message": "OTP sent to email!"})
+        else:
+            print(f"[DEV MODE] Signup OTP for {email} is: {otp_code}")
+            return jsonify({"status": "success", "message": f"Email failed. [DEV MODE] OTP: {otp_code}"})
+            
     except Exception as e:
         app.logger.exception("Signup Error")
         return jsonify({"error": "Something went wrong. Please try again."}), 500
-
+    
 @app.route('/api/verify-signup-otp', methods=['POST'])
 @limiter.limit("5 per minute")
 def verify_signup_otp():
@@ -268,23 +281,45 @@ def verify_login_otp():
 # ==============================================================================
 # FORGOT PASSWORD ROUTES
 # ==============================================================================
+
 @app.route('/api/forgot-password-request', methods=['POST'])
 @limiter.limit("5 per minute")
 def forgot_password_request():
     try:
         data = request.get_json()
         email = data.get('email', '').strip().lower()
-        if not email: return jsonify({"error": "Email is required"}), 400
+        if not email: 
+            return jsonify({"error": "Email is required"}), 400
+            
         user = User.query.filter_by(email=email).first()
-        if not user: return jsonify({"error": "User not found with this email"}), 404
-        otp = str(random.randint(100000, 999999))
-        send_email("Your Password Reset OTP", email, f"Your OTP for password reset is: {otp}.")
-        app.config['TEMP_OTP_STORE'] = {email: otp} 
-        return jsonify({"status": "success", "message": "OTP sent to email!"})
+        if not user: 
+            return jsonify({"error": "User not found with this email"}), 404
+            
+        otp_code = str(random.randint(100000, 999999))
+        expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=5)
+        
+        # ✅ FIX: Save to OTPCode table with type='reset' (secure, expires, tracks attempts)
+        db.session.add(OTPCode(
+            email=email, 
+            code_hash=generate_otp_hash(otp_code), 
+            type='reset',
+            payload='', 
+            expires_at=expires_at
+        ))
+        db.session.commit()
+        
+        # ✅ FIX: Check if email actually sent
+        email_sent = send_email("Your Password Reset OTP", email, f"Your OTP for password reset is: {otp_code}. It expires in 5 minutes.")
+        if email_sent:
+            return jsonify({"status": "success", "message": "OTP sent to email!"})
+        else:
+            print(f"[DEV MODE] Password Reset OTP for {email} is: {otp_code}")
+            return jsonify({"status": "success", "message": f"Email failed. [DEV MODE] OTP: {otp_code}"})
+            
     except Exception as e: 
-        app.logger.exception("Forgot Password Error")
+        app.logger.exception("Forgot Password Request Error")
         return jsonify({"error": "Something went wrong. Please try again."}), 500
-
+    
 @app.route('/api/forgot-password-verify', methods=['POST'])
 @limiter.limit("5 per minute")
 def forgot_password_verify():
@@ -294,21 +329,66 @@ def forgot_password_verify():
         otp = data.get('otp', '').replace(' ', '').strip()
         new_password = data.get('new_password', '')
         
-        if not new_password or len(new_password) < 6: return jsonify({"error": "Password must be at least 6 characters"}), 400
+        if not new_password or len(new_password) < 6: 
+            return jsonify({"error": "Password must be at least 6 characters"}), 400
+            
+        # ✅ FIX: Query the database for the latest reset OTP
+        otp_record = OTPCode.query.filter_by(email=email, type='reset').order_by(OTPCode.created_at.desc()).first()
         
-        temp_store = app.config.get('TEMP_OTP_STORE', {})
-        if email in temp_store and temp_store[email] == otp:
-            user = User.query.filter_by(email=email).first()
-            if user:
-                user.password_hash = generate_password_hash(new_password, method='pbkdf2:sha256')
-                db.session.commit()
-                del temp_store[email]
-                return jsonify({"status": "success", "message": "Password updated successfully! You can now login."})
-        return jsonify({"error": "Invalid OTP or session expired"}), 401
+        if not otp_record:
+            return jsonify({"error": "No reset OTP requested"}), 400
+        if otp_record.attempts >= 5:
+            return jsonify({"error": "Max attempts reached. Please request a new OTP."}), 429
+        if datetime.datetime.utcnow() > otp_record.expires_at:
+            return jsonify({"error": "OTP expired. Please request a new one."}), 400
+        if otp_record.code_hash != generate_otp_hash(otp):
+            otp_record.attempts += 1
+            db.session.commit()
+            return jsonify({"error": "Invalid OTP"}), 401
+            
+        # OTP is valid! Update password and clean up the used OTP
+        user = User.query.filter_by(email=email).first()
+        if user:
+            user.password_hash = generate_password_hash(new_password, method='pbkdf2:sha256')
+            db.session.delete(otp_record) 
+            db.session.commit()
+            return jsonify({"status": "success", "message": "Password updated successfully! You can now login."})
+            
+        return jsonify({"error": "User not found"}), 404
+        
     except Exception as e: 
         app.logger.exception("Verify Forgot Password Error")
         return jsonify({"error": "Something went wrong. Please try again."}), 500
 
+@app.route('/api/forgot-password-verify-otp', methods=['POST'])
+@limiter.limit("5 per minute")
+def forgot_password_verify_otp_only():
+    try:
+        data = request.get_json()
+        email = data.get('email', '').strip().lower()
+        otp = data.get('otp', '').replace(' ', '').strip()
+        
+        # Find the latest reset OTP for this email
+        otp_record = OTPCode.query.filter_by(email=email, type='reset').order_by(OTPCode.created_at.desc()).first()
+        
+        if not otp_record:
+            return jsonify({"error": "No reset OTP requested"}), 400
+        if otp_record.attempts >= 5:
+            return jsonify({"error": "Max attempts reached. Please request a new OTP."}), 429
+        if datetime.datetime.utcnow() > otp_record.expires_at:
+            return jsonify({"error": "OTP expired. Please request a new one."}), 400
+        if otp_record.code_hash != generate_otp_hash(otp):
+            otp_record.attempts += 1
+            db.session.commit()
+            return jsonify({"error": "Invalid OTP"}), 401
+            
+        # If we get here, the OTP is valid!
+        return jsonify({"status": "success", "message": "OTP verified successfully."})
+        
+    except Exception as e: 
+        app.logger.exception("Verify OTP Error")
+        return jsonify({"error": "Something went wrong."}), 500
+    
 # ==============================================================================
 # RESUME & INTERVIEW ROUTES
 # ==============================================================================
