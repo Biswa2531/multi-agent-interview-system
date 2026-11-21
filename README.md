@@ -18,19 +18,19 @@ An enterprise-grade, full-stack interview simulation platform that leverages **M
 - **Override Grading System:** Admins can manually adjust AI-generated scores with a mandatory reason field; changes are permanently flagged with `admin_override=True` for audit transparency.
 
 ### 🔐 Enterprise-Grade Security & Authentication
-- **Live Webcam Snapshot Capture:** HTML5 Canvas captures real frames every 10 seconds during interviews, stored securely and viewable in the Admin Evidence Viewer.
-- **Tab-Switch & Blur Detection:** Uses `visibilitychange` API to log violations; auto-submits interview after 3 strikes with violation evidence preserved.
+- **Live Webcam Snapshot Capture:** HTML5 Canvas captures real frames every 10 seconds during interviews, stored securely and viewable in the Admin Evidence Viewer via authenticated blob fetching.
+- **Tab-Switch & Blur Detection:** Uses `visibilitychange` and `blur` APIs with a **1.5s debounce guard** to log violations accurately without double-counting; auto-submits interview after 3 strikes.
 - **2FA Email OTP Authentication:** Secure signup/login/forgot-password flows using `Flask-Mail` with hashed, time-bound (5-min) OTPs and strict attempt limits to prevent brute-force attacks.
+- **OTP Leakage Prevention:** Strict `500 Internal Server Error` responses on SMTP failures to prevent account takeover, with local server logging only for debugging.
 - **Anti-Cheat Measures:** Copy/paste (Ctrl+C/V) and right-click disabled during active sessions; microphone audio visualizer confirms active listening.
 - **Role-Based Access Control (RBAC):** Strict JWT-protected separation of Candidate and Admin portals with dedicated `ProtectedRoute` wrappers.
 - **Dynamic Proctoring Configuration:** Frontend fetches `/api/proctoring-config` on load to respect admin-controlled `max_violations` and `webcam_enabled` settings.
-- **Server-Side Violation Logging:** All tab-switch/blur events are persisted to PostgreSQL via `POST /api/violation` with automatic interview termination on threshold breach.
 
 ### ⚙️ Robust Backend & DevOps
 - **Secure File Uploads:** Validates PDF "magic bytes", enforces size limits, and uses UUIDs to prevent directory traversal and filename clashes.
 - **Session Management:** Auto-marks abandoned interviews after 2 hours of inactivity, with a seamless **Resume Interview** flow for candidates to pick up where they left off.
 - **Production Deployment:** Fully containerized with **Docker**, **Nginx** (SPA fallback routing), and **Gunicorn** (multi-worker) for scalable, concurrent request handling.
-- **Cascade Deletes:** Ensures data integrity; deleting a user automatically purges all associated sessions, feedback, and snapshots.
+- **Resilient Data Persistence:** Explicit database rollbacks and safe upsert logic ensure AI responses are never blocked by non-critical persistence failures (e.g., `UniqueViolation`).
 
 ### 📊 Advanced Analytics & Reporting
 - **Dynamic Verdict Badge:** Feedback page displays "STRONG HIRE", "CONSIDER", or "REJECT" badge based on weighted average score thresholds.
@@ -85,11 +85,10 @@ This is the fastest and most reliable way to run the entire stack (Frontend, Bac
    # Database (Docker network defaults)
    DATABASE_URL=postgresql://postgres:postgres@interview_db:5432/interview_db
 
-   GROQ_MODEL=qwen/qwen3.8-27b
-   FRONTEND_URL=http://localhost:5173
-
    # AI & RAG
    GROQ_API_KEY=your_groq_api_key_here
+   GROQ_MODEL=qwen/qwen3.8-27b
+   FRONTEND_URL=http://localhost:5173
 
    # Email (Use a Gmail App Password, NOT your regular password)
    MAIL_SERVER=smtp.gmail.com
@@ -144,11 +143,11 @@ npm run dev
 
 ## 🧪 Automated Testing
 
-The backend includes a Pytest suite to mathematically verify security decorators and routing integrity.
+The backend includes a Pytest suite to mathematically verify security decorators, routing integrity, and authentication enforcement.
 
 To run the tests inside the Docker container:
 ```bash
-docker compose exec backend pytest tests/ -v
+docker compose exec backend pytest tests/test_security.py -v
 ```
 
 **Expected Output:**
@@ -156,7 +155,11 @@ docker compose exec backend pytest tests/ -v
 tests/test_security.py::test_admin_route_blocks_unauthenticated_users PASSED
 tests/test_security.py::test_admin_route_blocks_invalid_tokens PASSED
 tests/test_security.py::test_user_stats_route_blocks_unauthenticated_users PASSED
-============================== 3 passed in 1.23s ==============================
+tests/test_security.py::test_promote_to_admin_blocked_for_non_admins PASSED
+tests/test_security.py::test_snapshots_require_admin PASSED
+tests/test_security.py::test_violation_endpoint_requires_auth PASSED
+tests/test_security.py::test_proctoring_config_returns_settings PASSED
+============================== 7 passed in 1.23s ==============================
 ```
 
 ---
@@ -167,7 +170,7 @@ tests/test_security.py::test_user_stats_route_blocks_unauthenticated_users PASSE
 multi-agent-interview-system/
 ├── backend/
 │   ├── app.py                  # Main Flask application & all API routes
-│   ├── models.py               # SQLAlchemy models (User, Session, Feedback, Violation, etc.)
+│   ├── models.py               # SQLAlchemy models (User, Session, Feedback, Violation, OTPCode, etc.)
 │   ├── requirements.txt        # Python dependencies (includes pytest)
 │   ├── tests/                  # Pytest automated test suites
 │   │   ├── __init__.py
@@ -178,7 +181,7 @@ multi-agent-interview-system/
 ├── frontend/
 │   ├── src/
 │   │   ├── api.js              # Centralized Axios instance (auto-JWT, 401 handling)
-│   │   ├── components/         # Shared components (ProtectedRoute, StarryBackground)
+│   │   ├── components/         # Shared components (ProtectedRoute, StarryBackground, SnapshotImage.jsx)
 │   │   └── pages/              # Main page views (Dashboard, Interview, Admin panels)
 │   ├── nginx.conf              # Nginx SPA fallback & reverse proxy config
 │   └── Dockerfile              # Multi-stage Node/Nginx build
@@ -193,4 +196,4 @@ multi-agent-interview-system/
 
 ## 👨‍💻 Author
 
-**Biswajit Rout**
+**Biswajit Rout**  
