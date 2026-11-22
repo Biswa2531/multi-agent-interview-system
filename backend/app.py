@@ -400,50 +400,62 @@ def interview_chat(current_user):
     chat_history = data.get('chat_history', [])
     current_round = data.get('current_round', 1)
 
-    active_session = InterviewSession.query.filter_by(user_id=current_user.user_id, status='in_progress').order_by(InterviewSession.started_at.desc()).first()
+    active_session = InterviewSession.query.filter_by(
+        user_id=current_user.user_id, status='in_progress'
+    ).order_by(InterviewSession.started_at.desc()).first()
     
-    # ✅ FIX: If at 15 questions, complete the session and STOP. Do not create a new one.
+    # ✅ FIX: If at 15 questions, complete the session and STOP.
     if active_session and Question.query.filter_by(session_id=active_session.session_id).count() >= 15:
         active_session.status = 'completed'
         db.session.commit()
         return jsonify({"status": "success", "response": "Interview completed. Please check your feedback.", "is_complete": True})
 
     if not active_session:
-        active_session = InterviewSession(user_id=current_user.user_id, job_role=job_role, status='in_progress', started_at=datetime.datetime.utcnow())
+        active_session = InterviewSession(
+            user_id=current_user.user_id, 
+            job_role=job_role, 
+            status='in_progress', 
+            started_at=datetime.datetime.utcnow()
+        )
         db.session.add(active_session)
         db.session.commit()
 
+    # ✅ STEP 1: Find the PREVIOUS question (the one the user is currently answering)
+    last_question = Question.query.filter_by(session_id=active_session.session_id).order_by(Question.question_id.desc()).first()
+    
+    # ✅ STEP 2: Save the user's answer to the PREVIOUS question BEFORE generating the next one
+    if last_question:
+        new_r = Response(
+            question_id=last_question.question_id, 
+            user_id=current_user.user_id, 
+            answer_text=user_message
+        )
+        db.session.add(new_r)
+        db.session.commit() # Commit the answer to the CORRECT question
+
+    # ✅ STEP 3: Generate the NEXT question (N+1)
     resume_context = get_resume_context(current_user.user_id)
     ai_response = get_interviewer_response(user_message, job_role, chat_history, resume_context, current_round)
 
+    # ✅ STEP 4: Save the NEW question (N+1) to the database
     try:
-        sess = InterviewSession.query.get(active_session.session_id)
-        if not sess:
-            sess = InterviewSession.query.filter_by(user_id=current_user.user_id, status='in_progress').order_by(InterviewSession.started_at.desc()).first()
-            
-        if sess:
-            new_q = Question(session_id=sess.session_id, question_text=ai_response, category='Technical', difficulty='Medium')
-            db.session.add(new_q)
-            db.session.flush()
-            new_r = Response(question_id=new_q.question_id, user_id=current_user.user_id, answer_text=user_message)
-            db.session.add(new_r)
-            db.session.commit()
-        else:
-            db.session.rollback()
-            app.logger.warning("No valid session for persistence; skipping question/response save.")
+        new_q = Question(
+            session_id=active_session.session_id, 
+            question_text=ai_response, 
+            category='Technical',
+            difficulty='Medium'
+        )
+        db.session.add(new_q)
+        db.session.commit()
     except Exception as q_err:
         db.session.rollback()
-        app.logger.warning(f"Question/Response persistence skipped (non-fatal): {q_err}")
+        app.logger.warning(f"Question persistence skipped (non-fatal): {q_err}")
 
-    return jsonify({"status": "success", "response": ai_response, "is_complete": False})
-
-def check_abandoned_sessions():
-    two_hours_ago = datetime.datetime.utcnow() - datetime.timedelta(hours=2)
-    abandoned_sessions = InterviewSession.query.filter(InterviewSession.status == 'in_progress', InterviewSession.started_at < two_hours_ago).all()
-    for session in abandoned_sessions:
-        session.status = 'abandoned'
-    if abandoned_sessions:
-        db.session.commit()
+    return jsonify({
+        "status": "success", 
+        "response": ai_response, 
+        "is_complete": False
+    })
 
 @app.route('/api/interview/<int:session_id>/resume', methods=['POST'])
 @token_required
