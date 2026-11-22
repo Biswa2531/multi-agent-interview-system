@@ -38,6 +38,7 @@ function Interview() {
   const [webcamActive, setWebcamActive] = useState(false)
   const interviewStartedRef = useRef(interviewStarted)
   const lastViolationRef = useRef(0)
+  const restoredRef = useRef(false) // ✅ Guard to prevent duplicate restore calls
   const [hintsUsed, setHintsUsed] = useState(0)
   const [techScore, setTechScore] = useState(0)
   const [behavScore, setBehavScore] = useState(0)
@@ -165,8 +166,52 @@ function Interview() {
     }
     fetchProctoringConfig()
 
-    if (sessionId) addLog('info', `Resuming session: ${sessionId}`)
-    else {
+    // ✅ NEW: Restore session state if resuming an existing interview
+    if (sessionId) {
+      addLog('info', `Resuming session: ${sessionId}`)
+      if (!restoredRef.current) {
+        restoredRef.current = true
+        const restoreSession = async () => {
+          try {
+            const res = await api.post(`/api/interview/${sessionId}/resume`)
+            const { job_role } = res.data.session
+            const qa_history = res.data.qa_history || []
+
+            setJobRole(job_role)
+            setRoleInput(job_role)
+
+            // Rebuild chat UI from persisted Q&A pairs
+            const restoredMessages = []
+            qa_history.forEach((qa) => {
+              if (qa.question) restoredMessages.push({ role: 'ai', text: qa.question })
+              if (qa.answer) restoredMessages.push({ role: 'user', text: qa.answer })
+            })
+            if (restoredMessages.length === 0) {
+              restoredMessages.push({ role: 'ai', text: `Welcome back! Let's continue your evaluation for the **${job_role}** role. Please continue answering.` })
+            }
+            setMessages(restoredMessages)
+
+            // Infer current round from question count
+            const qCount = qa_history.length
+            if (qCount > 10) setCurrentRound(3)
+            else if (qCount > 5) setCurrentRound(2)
+            else setCurrentRound(1)
+
+            // Resume the timer for the current round
+            setInterviewStarted(true)
+            setTimeRemaining(roundLimits[qCount > 10 ? 3 : qCount > 5 ? 2 : 1])
+            setIsActive(true)
+            addLog('success', `Session restored: ${qCount} questions recovered.`)
+          } catch (err) {
+            console.error('Failed to restore session', err)
+            addLog('error', 'Failed to restore session. Starting fresh.')
+            const welcomeMessage = `Hello! I am your AI Interviewer. Let's begin your evaluation for the **${jobRole}** role.\n\nThis interview consists of 3 rounds:\n1. **Technical Round** (15 mins)\n2. **Behavioral Round** (10 mins)\n3. **HR Round** (5 mins)\n\nThe timer will start as soon as you send your first message. To start, could you briefly introduce yourself?`
+            setMessages([{ role: 'ai', text: welcomeMessage }])
+          }
+        }
+        restoreSession()
+      }
+    } else {
       const welcomeMessage = `Hello! I am your AI Interviewer. Let's begin your evaluation for the **${jobRole}** role.\n\nThis interview consists of 3 rounds:\n1. **Technical Round** (15 mins)\n2. **Behavioral Round** (10 mins)\n3. **HR Round** (5 mins)\n\nThe timer will start as soon as you send your first message. To start, could you briefly introduce yourself?`
       setMessages([{ role: 'ai', text: welcomeMessage }])
       addLog('success', 'Interviewer Agent (Sophia v4.2) connected.')
@@ -250,19 +295,21 @@ function Interview() {
   }, [proctoringConfig.webcam_enabled])
 
   useEffect(() => {
-    if (messages.length === 1 && messages[0].role === 'ai') {
+    if (!sessionId && messages.length === 1 && messages[0].role === 'ai') {
       const newWelcomeMessage = `Hello! I am your AI Interviewer. Let's begin your evaluation for the **${jobRole}** role.\n\nThis interview consists of 3 rounds:\n1. **Technical Round** (15 mins)\n2. **Behavioral Round** (10 mins)\n3. **HR Round** (5 mins)\n\nThe timer will start as soon as you send your first message. To start, could you briefly introduce yourself?`;
       setMessages([{ role: 'ai', text: newWelcomeMessage }]);
     }
-  }, [jobRole]);
+  }, [jobRole, sessionId]);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
   useEffect(() => {
-    setTimeRemaining(roundLimits[currentRound])
-    setIsActive(true)
-    addLog('info', `Switched to Round ${currentRound}. Time reset to ${roundLimits[currentRound] / 60} minutes.`)
-  }, [currentRound])
+    if (!sessionId) {
+      setTimeRemaining(roundLimits[currentRound])
+      setIsActive(true)
+      addLog('info', `Switched to Round ${currentRound}. Time reset to ${roundLimits[currentRound] / 60} minutes.`)
+    }
+  }, [currentRound, sessionId])
 
   useEffect(() => {
     let interval = null
@@ -284,8 +331,7 @@ function Interview() {
   }, [])
 
   const handleRoleSelect = (role) => { setRoleInput(role); setJobRole(role); setIsRoleDropdownOpen(false) }
-  
-  // ✅ FIXED: Actually uploads to backend for live RAG indexing
+
   const handleResumeUpload = async (e) => {
     const file = e.target.files[0]
     if (!file) return
@@ -338,7 +384,7 @@ function Interview() {
       setTechScore(prev => Math.min(prev + Math.random() * 1.5, 10))
       setBehavScore(prev => Math.min(prev + Math.random() * 1.5, 10))
       if (res.data.is_complete) { toast.success('Interview completed!'); setTimeout(() => submitInterviewData(snapshotsRef.current), 1500) }
-    } catch (err) { toast.error('Failed to get AI response.'); addLog('error', 'API Error.') } 
+    } catch (err) { toast.error('Failed to get AI response.'); addLog('error', 'API Error.') }
     finally { setIsLoading(false) }
   }
 
