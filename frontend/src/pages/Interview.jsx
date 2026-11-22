@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import api from '../api' // ✅ Centralized API instance (auto-attaches JWT, handles 401)
+import api from '../api'
 import toast from 'react-hot-toast'
 import Editor from '@monaco-editor/react'
 import StarryBackground from '../components/StarryBackground'
@@ -37,12 +37,11 @@ function Interview() {
   const [violations, setViolations] = useState(0)
   const [webcamActive, setWebcamActive] = useState(false)
   const interviewStartedRef = useRef(interviewStarted)
-  const lastViolationRef = useRef(0) // ✅ Debounce guard against double-counting
+  const lastViolationRef = useRef(0)
   const [hintsUsed, setHintsUsed] = useState(0)
   const [techScore, setTechScore] = useState(0)
   const [behavScore, setBehavScore] = useState(0)
 
-  // ✅ Task 15: State for dynamic proctoring config
   const [proctoringConfig, setProctoringConfig] = useState({ max_violations: 3, webcam_enabled: true })
 
   const [isListening, setIsListening] = useState(false)
@@ -53,7 +52,7 @@ function Interview() {
   const animationRef = useRef(null)
 
   const [snapshots, setSnapshots] = useState([])
-  const snapshotsRef = useRef([]) // ✅ Always holds the LATEST snapshots (fixes stale-closure 0-snapshot bug)
+  const snapshotsRef = useRef([])
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
 
@@ -61,7 +60,7 @@ function Interview() {
   const filteredRoles = jobRoles.filter(role => role.toLowerCase().includes(roleInput.toLowerCase()))
 
   useEffect(() => { interviewStartedRef.current = interviewStarted }, [interviewStarted])
-  useEffect(() => { snapshotsRef.current = snapshots }, [snapshots]) // ✅ Sync ref on every capture
+  useEffect(() => { snapshotsRef.current = snapshots }, [snapshots])
 
   const addLog = (type, text) => setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), type, text }])
 
@@ -101,27 +100,20 @@ function Interview() {
       setAudioLevels(Array(8).fill(0))
       return
     }
-
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       streamRef.current = stream
-
       const AudioContext = window.AudioContext || window.webkitAudioContext
       const audioContext = new AudioContext()
       audioContextRef.current = audioContext
-
       const analyser = audioContext.createAnalyser()
       analyserRef.current = analyser
       analyser.fftSize = 64
-
       const source = audioContext.createMediaStreamSource(stream)
       source.connect(analyser)
-
       const bufferLength = analyser.frequencyBinCount
       const dataArray = new Uint8Array(bufferLength)
-
       setIsListening(true)
-
       const updateVisualizer = () => {
         analyser.getByteFrequencyData(dataArray)
         const levels = Array.from(dataArray.slice(0, 8)).map(value => (value / 255) * 100)
@@ -136,36 +128,24 @@ function Interview() {
     }
   }
 
-  // ✅ Centralized function to submit interview data using api.js
   const submitInterviewData = async (currentSnapshots, isAutoSubmit = false) => {
     setIsLoading(true);
     try {
       let currentSessionId = sessionId;
-
       if (!currentSessionId) {
           const res = await api.get('/api/interviews');
           const activeSession = res.data.data.find(s => s.status === 'in_progress');
-          if (activeSession) {
-              currentSessionId = activeSession.session_id;
-          } else {
+          if (activeSession) currentSessionId = activeSession.session_id;
+          else {
               toast.error("No active interview session found.");
               setIsLoading(false);
               return;
           }
       }
-
-      await api.post(`/api/evaluate/${currentSessionId}`, {
-        snapshots: currentSnapshots
-      });
-
-      if (isAutoSubmit) {
-          toast.error("Interview auto-submitted due to violations.");
-      } else {
-          toast.success("Interview evaluated successfully!");
-      }
-
+      await api.post(`/api/evaluate/${currentSessionId}`, { snapshots: currentSnapshots });
+      if (isAutoSubmit) toast.error("Interview auto-submitted due to violations.");
+      else toast.success("Interview evaluated successfully!");
       navigate(`/feedback/${currentSessionId}`);
-
     } catch (err) {
       console.error(err);
       toast.error("Failed to evaluate interview. Please try again.");
@@ -174,59 +154,44 @@ function Interview() {
     }
   };
 
-  // MAIN INITIALIZATION & PROCTORING EFFECT
   useEffect(() => {
     const token = localStorage.getItem('token')
     if (!token) { navigate('/') }
-
     const fetchProctoringConfig = async () => {
       try {
         const res = await api.get('/api/proctoring-config')
         setProctoringConfig(res.data.data)
-      } catch (err) {
-        console.error('Failed to fetch proctoring config', err)
-      }
+      } catch (err) { console.error('Failed to fetch proctoring config', err) }
     }
     fetchProctoringConfig()
 
-    if (sessionId) {
-      addLog('info', `Resuming session: ${sessionId}`)
-    } else {
+    if (sessionId) addLog('info', `Resuming session: ${sessionId}`)
+    else {
       const welcomeMessage = `Hello! I am your AI Interviewer. Let's begin your evaluation for the **${jobRole}** role.\n\nThis interview consists of 3 rounds:\n1. **Technical Round** (15 mins)\n2. **Behavioral Round** (10 mins)\n3. **HR Round** (5 mins)\n\nThe timer will start as soon as you send your first message. To start, could you briefly introduce yourself?`
       setMessages([{ role: 'ai', text: welcomeMessage }])
       addLog('success', 'Interviewer Agent (Sophia v4.2) connected.')
       addLog('info', 'RAG Engine: Loading candidate profile context...')
     }
 
-    let snapshotInterval;
-    let stream;
-
+    let snapshotInterval, stream;
     const initWebcam = async () => {
       if (!proctoringConfig.webcam_enabled) {
         addLog('info', 'Webcam proctoring is disabled by admin settings.')
         return
       }
-
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: true })
         setWebcamActive(true)
-
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream
-        }
-
+        if (videoRef.current) videoRef.current.srcObject = stream
         addLog('success', 'Webcam proctoring activated. Snapshots will be taken every 10s.')
-
         snapshotInterval = setInterval(() => {
           const canvas = canvasRef.current
           const video = videoRef.current
-
           if (canvas && video && video.readyState === video.HAVE_ENOUGH_DATA) {
             canvas.width = video.videoWidth
             canvas.height = video.videoHeight
             const ctx = canvas.getContext('2d')
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-
             const dataUrl = canvas.toDataURL('image/jpeg')
             setSnapshots(prev => [dataUrl, ...prev].slice(0, 5))
             addLog('info', 'Proctoring: Real webcam snapshot captured and encrypted.')
@@ -238,62 +203,38 @@ function Interview() {
     }
     initWebcam()
 
-    // ✅ Violation logic with blur fallback + DEBOUNCE + snapshotsRef (no stale closure)
     const handleViolation = async () => {
-      if (!interviewStartedRef.current) {
-        console.log('Interview not started yet, ignoring tab switch/blur.');
-        return;
-      }
-
+      if (!interviewStartedRef.current) return;
       const now = Date.now();
-      if (now - lastViolationRef.current < 1500) {
-        console.log('Duplicate violation event ignored (debounce).');
-        return;
-      }
+      if (now - lastViolationRef.current < 1500) return;
       lastViolationRef.current = now;
 
       try {
         let currentSessionId = sessionId;
-
         if (!currentSessionId) {
           const res = await api.get('/api/interviews');
           const activeSession = res.data.data?.find(s => s.status === 'in_progress');
-          if (activeSession) {
-              currentSessionId = activeSession.session_id;
-          } else {
-              console.warn('No active session found to log violation against.');
-              return;
-          }
+          if (activeSession) currentSessionId = activeSession.session_id;
+          else return;
         }
-
         const res = await api.post('/api/violation', {
-          session_id: currentSessionId,
-          type: 'tab_switch',
-          details: 'Candidate switched tabs or minimized the window'
+          session_id: currentSessionId, type: 'tab_switch', details: 'Candidate switched tabs or minimized the window'
         })
-
         const newCount = res.data.violation_count
         setViolations(newCount)
         addLog('error', `VIOLATION DETECTED: Tab switch or window minimize! (${newCount}/${proctoringConfig.max_violations})`)
         toast.error(`⚠️ Warning: Tab switch detected! (${newCount}/${proctoringConfig.max_violations})`)
-
         if (newCount >= proctoringConfig.max_violations) {
           toast.error('Maximum violations reached. Auto-submitting interview...')
-          // ✅ Use snapshotsRef.current so the LIVE frames are actually sent
           setTimeout(() => submitInterviewData(snapshotsRef.current, true), 2000)
         }
       } catch (err) {
         console.error('❌ Failed to log violation:', err)
-        toast.error('Proctoring error: Could not log violation. Check console (F12).')
+        toast.error('Proctoring error: Could not log violation.')
       }
     }
 
-    const handleVisibilityChange = () => {
-      if (document.hidden) {
-        handleViolation();
-      }
-    };
-
+    const handleVisibilityChange = () => { if (document.hidden) handleViolation(); };
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('blur', handleViolation);
 
@@ -331,7 +272,7 @@ function Interview() {
       setIsActive(false)
       toast.error(`Time up for Round ${currentRound}!`)
       if (currentRound < 3) setCurrentRound(prev => prev + 1)
-      else { toast.success('Interview completed!'); setTimeout(() => submitInterviewData(snapshotsRef.current), 2000) } // ✅ ref
+      else { toast.success('Interview completed!'); setTimeout(() => submitInterviewData(snapshotsRef.current), 2000) }
     }
     return () => clearInterval(interval)
   }, [isActive, timeRemaining, currentRound, navigate, interviewStarted])
@@ -343,13 +284,28 @@ function Interview() {
   }, [])
 
   const handleRoleSelect = (role) => { setRoleInput(role); setJobRole(role); setIsRoleDropdownOpen(false) }
-  const handleResumeUpload = (e) => {
+  
+  // ✅ FIXED: Actually uploads to backend for live RAG indexing
+  const handleResumeUpload = async (e) => {
     const file = e.target.files[0]
-    if (file) {
-      if (file.type !== 'application/pdf') { toast.error('Please upload a PDF file'); return }
-      setResumeFile(file); toast.success(`Resume uploaded: ${file.name}`); addLog('success', `Resume uploaded: ${file.name}`)
+    if (!file) return
+    if (file.type !== 'application/pdf') { toast.error('Please upload a PDF file'); return }
+    setIsLoading(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const res = await api.post('/api/upload-resume', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
+      toast.success(res.data.message)
+      setResumeFile(file)
+      addLog('success', `Resume uploaded and indexed in RAG: ${file.name}`)
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to upload resume')
+      addLog('error', 'Resume upload failed')
+    } finally {
+      setIsLoading(false)
     }
   }
+
   const handleClearResume = () => { setResumeFile(null); toast.success('Resume cleared'); addLog('warning', 'Resume cleared from RAG context') }
 
   const handleSubmitCode = () => {
@@ -363,19 +319,17 @@ function Interview() {
 
   const handleEndInterview = () => {
     if (!window.confirm("Are you sure you want to end the interview and generate your report?")) return;
-    submitInterviewData(snapshotsRef.current, false); // ✅ ref
+    submitInterviewData(snapshotsRef.current, false);
   };
 
   const handleSend = async () => {
     if (!input.trim() || isLoading) return
     if (!interviewStarted) { setInterviewStarted(true); addLog('success', 'Timer started. Interview is now live.') }
-
     const userMessage = input
     setInput('')
     setMessages(prev => [...prev, { role: 'user', text: userMessage }])
     setIsLoading(true)
     addLog('warning', 'Candidate response received. Processing...')
-
     try {
       const chatHistory = messages.map(m => ({ role: m.role === 'ai' ? 'assistant' : 'user', text: m.text, content: m.text }))
       const res = await api.post('/api/interview', { message: userMessage, job_role: jobRole, chat_history: chatHistory, current_round: currentRound })
@@ -383,13 +337,12 @@ function Interview() {
       setMessages(prev => [...prev, { role: 'ai', text: res.data.response }])
       setTechScore(prev => Math.min(prev + Math.random() * 1.5, 10))
       setBehavScore(prev => Math.min(prev + Math.random() * 1.5, 10))
-      if (res.data.is_complete) { toast.success('Interview completed!'); setTimeout(() => submitInterviewData(snapshotsRef.current), 1500) } // ✅ ref
-    } catch (err) { toast.error('Failed to get AI response.'); addLog('error', 'API Error.') }
+      if (res.data.is_complete) { toast.success('Interview completed!'); setTimeout(() => submitInterviewData(snapshotsRef.current), 1500) }
+    } catch (err) { toast.error('Failed to get AI response.'); addLog('error', 'API Error.') } 
     finally { setIsLoading(false) }
   }
 
   const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() } }
-
   const handleContextMenu = (e) => e.preventDefault()
   const handleCopy = (e) => { if (interviewStarted) { e.preventDefault(); toast.error('Copying is disabled during the interview!') } }
   const handlePaste = (e) => { if (interviewStarted) { e.preventDefault(); toast.error('Pasting is disabled during the interview!') } }
@@ -402,54 +355,34 @@ function Interview() {
   const roundBadge = getRoundBadge()
 
   return (
-    <div
-      onContextMenu={handleContextMenu}
-      onCopy={handleCopy}
-      onPaste={handlePaste}
-      className="min-h-screen relative overflow-hidden bg-gray-50 dark:bg-slate-900 transition-colors duration-300"
-    >
+    <div onContextMenu={handleContextMenu} onCopy={handleCopy} onPaste={handlePaste} className="min-h-screen relative overflow-hidden bg-gray-50 dark:bg-slate-900 transition-colors duration-300">
       <StarryBackground />
-
-      {/* ✅ Hidden but rendered video element for webcam capture (Fixes black screen snapshots) */}
-      <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        muted
-        style={{ position: 'absolute', opacity: 0, pointerEvents: 'none', width: '1px', height: '1px' }}
-      />
+      <video ref={videoRef} autoPlay playsInline muted style={{ position: 'absolute', opacity: 0, pointerEvents: 'none', width: '1px', height: '1px' }} />
       <canvas ref={canvasRef} className="hidden" />
-
       <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
         <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-cyan-500/20 dark:bg-cyan-500/10 rounded-full blur-3xl animate-bg-1"></div>
         <div className="absolute bottom-[-10%] right-[-10%] w-[600px] h-[600px] bg-blue-500/20 dark:bg-blue-500/10 rounded-full blur-3xl animate-bg-2"></div>
       </div>
-
       <div className="relative z-10 flex flex-col h-screen pt-16">
-
         <div className="glass-card border-b border-white/20 dark:border-slate-700/50 px-6 py-3 shrink-0 relative z-30 overflow-visible">
           <div className="flex flex-wrap items-center justify-between gap-4 overflow-visible">
             <div className="flex items-center gap-4 flex-wrap">
               <span className="text-xs font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/30 px-3 py-1.5 rounded-full border border-emerald-200 dark:border-emerald-800 font-bold">● LIVE</span>
               <span className={`text-xs font-bold px-3 py-1.5 rounded-full border ${roundBadge.color}`}>{roundBadge.text}</span>
-
               <div className={`text-lg font-mono font-bold px-4 py-1.5 rounded-lg border flex items-center gap-2 ${timeRemaining < 60 && interviewStarted ? 'text-red-600 bg-red-100 border-red-300 animate-pulse' : 'text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700'}`}>
                 {interviewStarted ? '⏱️' : '⏸️'} {formatTime(timeRemaining)}
               </div>
-
               {violations > 0 && (
                 <div className="text-sm font-bold px-3 py-1.5 rounded-lg border bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 border-red-300 dark:border-red-800 animate-pulse">
                   ⚠️ {violations}/{proctoringConfig.max_violations} Violations
                 </div>
               )}
-
               <div className="flex gap-1 bg-slate-200 dark:bg-slate-800 p-1 rounded-lg border border-slate-300 dark:border-slate-700">
                 {[1, 2, 3].map(round => (
                   <button key={round} onClick={() => setCurrentRound(round)} className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${currentRound === round ? 'bg-cyan-500 text-white shadow-md' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-300 dark:hover:bg-slate-700'}`}>R{round}</button>
                 ))}
               </div>
             </div>
-
             <div className="relative role-dropdown-container overflow-visible">
               <label className="text-sm font-medium text-slate-600 dark:text-slate-400 mr-2">Role:</label>
               <input type="text" value={roleInput} onChange={(e) => { setRoleInput(e.target.value); setIsRoleDropdownOpen(true) }} onFocus={() => setIsRoleDropdownOpen(true)} className="glass-input px-3 py-1.5 text-sm font-medium min-w-[200px] cursor-pointer" placeholder="Type or select role..." />
@@ -459,17 +392,13 @@ function Interview() {
                 </div>
               )}
             </div>
-
             <div className="flex items-center gap-3">
-              <button onClick={handleAskHint} className="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white font-bold px-4 py-2 rounded-lg shadow-lg transition-all text-sm flex items-center gap-1">
-                💡 Hint ({hintsUsed}/3)
-              </button>
+              <button onClick={handleAskHint} className="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white font-bold px-4 py-2 rounded-lg shadow-lg transition-all text-sm flex items-center gap-1">💡 Hint ({hintsUsed}/3)</button>
               <button onClick={() => setShowCodeEditor(!showCodeEditor)} className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${showCodeEditor ? 'bg-cyan-500 text-white' : 'glass-button-secondary'}`}>{showCodeEditor ? ' Hide Code' : '💻 Code Editor'}</button>
               <button onClick={handleEndInterview} className="bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-400 hover:to-green-500 text-white font-bold px-4 py-2 rounded-lg shadow-lg transition-all text-sm">End & Evaluate</button>
             </div>
           </div>
         </div>
-
         <div className="glass-card border-b border-white/20 dark:border-slate-700/50 px-6 py-2 shrink-0 relative z-10">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -492,7 +421,6 @@ function Interview() {
             </div>
           </div>
         </div>
-
         <div className="flex-1 flex flex-col md:flex-row overflow-hidden p-4 gap-4">
           <div className="flex-1 flex flex-col gap-4 min-w-0">
             <div className="flex-1 glass-card rounded-2xl p-4 flex flex-col overflow-hidden">
@@ -523,56 +451,25 @@ function Interview() {
                 )}
                 <div ref={chatEndRef} />
               </div>
-
               <div className="mt-4 flex gap-2 items-center">
-                <button
-                  onClick={toggleListening}
-                  className={`p-3 rounded-lg transition-all ${isListening ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/30' : 'glass-button-secondary'}`}
-                  title={isListening ? "Stop Listening" : "Start Listening"}
-                >
-                  {isListening ? (
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" /></svg>
-                  ) : (
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
-                  )}
+                <button onClick={toggleListening} className={`p-3 rounded-lg transition-all ${isListening ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/30' : 'glass-button-secondary'}`} title={isListening ? "Stop Listening" : "Start Listening"}>
+                  {isListening ? <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" /></svg> : <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>}
                 </button>
-
                 <div className="flex items-center gap-1 h-8 px-2 glass-card rounded-lg min-w-[60px] justify-center">
-                  {audioLevels.map((level, index) => (
-                    <div
-                      key={index}
-                      className="w-1.5 bg-gradient-to-t from-cyan-500 to-blue-500 rounded-full transition-all duration-75"
-                      style={{ height: `${Math.max(level, 10)}%` }}
-                    ></div>
-                  ))}
+                  {audioLevels.map((level, index) => (<div key={index} className="w-1.5 bg-gradient-to-t from-cyan-500 to-blue-500 rounded-full transition-all duration-75" style={{ height: `${Math.max(level, 10)}%` }}></div>))}
                 </div>
-
-                <input
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder={isListening ? "Listening... (Type your answer)" : "Type your answer here..."}
-                  disabled={isLoading}
-                  className="flex-1 glass-input px-4 py-3 text-sm"
-                />
-                <button
-                  onClick={handleSend}
-                  disabled={isLoading || !input.trim()}
-                  className="glass-button px-6 py-3 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
+                <input type="text" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} placeholder={isListening ? "Listening... (Type your answer)" : "Type your answer here..."} disabled={isLoading} className="flex-1 glass-input px-4 py-3 text-sm" />
+                <button onClick={handleSend} disabled={isLoading || !input.trim()} className="glass-button px-6 py-3 disabled:opacity-50 disabled:cursor-not-allowed">
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
                 </button>
               </div>
             </div>
-
             {showCodeEditor && (
               <div className="h-64 glass-card rounded-2xl overflow-hidden flex flex-col border-2 border-cyan-500/30">
                 <div className="bg-slate-800 text-slate-300 text-xs px-4 py-2 flex justify-between items-center border-b border-slate-700">
                   <span className="font-mono">solution.js</span>
                   <button onClick={handleSubmitCode} className="bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1 rounded text-xs font-bold transition-colors flex items-center gap-1">
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                    Submit Code
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> Submit Code
                   </button>
                 </div>
                 <div className="flex-1">
@@ -581,93 +478,54 @@ function Interview() {
               </div>
             )}
           </div>
-
           <div className="w-full md:w-80 flex flex-col gap-4 shrink-0">
-
             <div className="glass-card rounded-2xl p-4 space-y-3">
               <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">Active Agents</h3>
-
               <div className="flex items-center gap-3 p-2 rounded-lg bg-white/40 dark:bg-slate-800/40 border border-white/20 dark:border-slate-700/50">
-                <div className="relative">
-                  <div className="w-8 h-8 rounded-full bg-cyan-100 dark:bg-cyan-900/50 flex items-center justify-center text-cyan-600 dark:text-cyan-400 font-bold text-xs">S</div>
-                  <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 border-2 border-white dark:border-slate-800 rounded-full"></div>
-                </div>
-                <div>
-                  <p className="text-sm font-bold text-slate-800 dark:text-slate-200">Sophia v4.2</p>
-                  <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">● ONLINE (Interviewer)</p>
-                </div>
+                <div className="relative"><div className="w-8 h-8 rounded-full bg-cyan-100 dark:bg-cyan-900/50 flex items-center justify-center text-cyan-600 dark:text-cyan-400 font-bold text-xs">S</div><div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 border-2 border-white dark:border-slate-800 rounded-full"></div></div>
+                <div><p className="text-sm font-bold text-slate-800 dark:text-slate-200">Sophia v4.2</p><p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">● ONLINE (Interviewer)</p></div>
               </div>
-
               <div className="flex items-center gap-3 p-2 rounded-lg bg-white/40 dark:bg-slate-800/40 border border-white/20 dark:border-slate-700/50">
-                <div className="relative">
-                  <div className="w-8 h-8 rounded-full bg-purple-100 dark:bg-purple-900/50 flex items-center justify-center text-purple-600 dark:text-purple-400 font-bold text-xs">C</div>
-                  <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 border-2 border-white dark:border-slate-800 rounded-full animate-pulse"></div>
-                </div>
-                <div>
-                  <p className="text-sm font-bold text-slate-800 dark:text-slate-200">Chronos v2.1</p>
-                  <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">● SYNCED (Evaluator)</p>
-                </div>
+                <div className="relative"><div className="w-8 h-8 rounded-full bg-purple-100 dark:bg-purple-900/50 flex items-center justify-center text-purple-600 dark:text-purple-400 font-bold text-xs">C</div><div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 border-2 border-white dark:border-slate-800 rounded-full animate-pulse"></div></div>
+                <div><p className="text-sm font-bold text-slate-800 dark:text-slate-200">Chronos v2.1</p><p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">● SYNCED (Evaluator)</p></div>
               </div>
             </div>
-
             {snapshots.length > 0 && (
               <div className="glass-card rounded-2xl p-4 space-y-2">
-                <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
-                  Live Captures
-                </h3>
+                <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span> Live Captures</h3>
                 <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar">
                   {snapshots.map((snap, idx) => (
                     <div key={idx} className="relative shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 border-cyan-500/50 shadow-lg">
                       <img src={snap} alt={`Snapshot ${idx}`} className="w-full h-full object-cover" />
-                      <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-[8px] text-white text-center py-0.5">
-                        {new Date().toLocaleTimeString()}
-                      </div>
+                      <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-[8px] text-white text-center py-0.5">{new Date().toLocaleTimeString()}</div>
                     </div>
                   ))}
                 </div>
               </div>
             )}
-
             <div className="glass-card rounded-2xl p-5 text-center">
               <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-4">Live Evaluation</h3>
               <div className="flex justify-around">
                 <div className="flex flex-col items-center">
                   <div className="w-16 h-16 relative">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <RadialBarChart cx="50%" cy="50%" innerRadius="60%" outerRadius="100%" barSize={6} data={[{ name: 'Tech', value: techScore * 10, fill: '#06b6d4' }]}>
-                        <RadialBar background={{ fill: 'rgba(148, 163, 184, 0.2)' }} clockWise dataKey="value" cornerRadius={10} />
-                      </RadialBarChart>
-                    </ResponsiveContainer>
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <span className="text-sm font-bold text-cyan-600 dark:text-cyan-400">{techScore.toFixed(1)}</span>
-                    </div>
+                    <ResponsiveContainer width="100%" height="100%"><RadialBarChart cx="50%" cy="50%" innerRadius="60%" outerRadius="100%" barSize={6} data={[{ name: 'Tech', value: techScore * 10, fill: '#06b6d4' }]}><RadialBar background={{ fill: 'rgba(148, 163, 184, 0.2)' }} clockWise dataKey="value" cornerRadius={10} /></RadialBarChart></ResponsiveContainer>
+                    <div className="absolute inset-0 flex items-center justify-center"><span className="text-sm font-bold text-cyan-600 dark:text-cyan-400">{techScore.toFixed(1)}</span></div>
                   </div>
                   <p className="text-[10px] font-medium text-slate-600 dark:text-slate-400 mt-1">Technical</p>
                 </div>
-
                 <div className="flex flex-col items-center">
                   <div className="w-16 h-16 relative">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <RadialBarChart cx="50%" cy="50%" innerRadius="60%" outerRadius="100%" barSize={6} data={[{ name: 'Behav', value: behavScore * 10, fill: '#a855f7' }]}>
-                        <RadialBar background={{ fill: 'rgba(148, 163, 184, 0.2)' }} clockWise dataKey="value" cornerRadius={10} />
-                      </RadialBarChart>
-                    </ResponsiveContainer>
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <span className="text-sm font-bold text-purple-600 dark:text-purple-400">{behavScore.toFixed(1)}</span>
-                    </div>
+                    <ResponsiveContainer width="100%" height="100%"><RadialBarChart cx="50%" cy="50%" innerRadius="60%" outerRadius="100%" barSize={6} data={[{ name: 'Behav', value: behavScore * 10, fill: '#a855f7' }]}><RadialBar background={{ fill: 'rgba(148, 163, 184, 0.2)' }} clockWise dataKey="value" cornerRadius={10} /></RadialBarChart></ResponsiveContainer>
+                    <div className="absolute inset-0 flex items-center justify-center"><span className="text-sm font-bold text-purple-600 dark:text-purple-400">{behavScore.toFixed(1)}</span></div>
                   </div>
                   <p className="text-[10px] font-medium text-slate-600 dark:text-slate-400 mt-1">Behavioral</p>
                 </div>
               </div>
               <p className="text-[10px] text-slate-500 dark:text-slate-500 mt-4 italic">Scores update dynamically based on AI analysis.</p>
             </div>
-
             <div className="flex-1 glass-card rounded-2xl overflow-hidden flex flex-col bg-slate-900/80 border-slate-700">
               <div className="bg-slate-800/80 px-4 py-2 border-b border-slate-700 flex items-center gap-2">
-                <div className="w-2.5 h-2.5 rounded-full bg-red-500"></div>
-                <div className="w-2.5 h-2.5 rounded-full bg-yellow-500"></div>
-                <div className="w-2.5 h-2.5 rounded-full bg-green-500"></div>
+                <div className="w-2.5 h-2.5 rounded-full bg-red-500"></div><div className="w-2.5 h-2.5 rounded-full bg-yellow-500"></div><div className="w-2.5 h-2.5 rounded-full bg-green-500"></div>
                 <span className="text-xs font-mono text-slate-400 ml-2">agent_deliberation.log</span>
               </div>
               <div className="flex-1 overflow-y-auto p-3 font-mono text-[11px] space-y-2 custom-scrollbar">
@@ -681,7 +539,6 @@ function Interview() {
                 ))}
               </div>
             </div>
-
           </div>
         </div>
       </div>

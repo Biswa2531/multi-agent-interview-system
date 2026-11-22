@@ -29,26 +29,16 @@ from agents.evaluator import evaluate_interview
 from utils.resume_parser import process_resume, get_resume_context, collection
 from fpdf import FPDF
 
-# Setup basic logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.config.from_object(Config)
 
-# Phase 1: Strict CORS
 frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
 CORS(app, resources={r"/*": {"origins": [frontend_url]}}, supports_credentials=True)
 
-# Phase 1: Rate Limiting
-limiter = Limiter(
-    get_remote_address,
-    app=app,
-    default_limits=["200 per day", "50 per hour"],
-    storage_uri="memory://"
-)
-
-# Phase 1: Flask Migrate
+limiter = Limiter(get_remote_address, app=app, default_limits=["200 per day", "50 per hour"], storage_uri="memory://")
 Migrate(app, db)
 
 app.config['MAIL_SERVER'] = os.getenv('MAIL_SERVER')
@@ -56,10 +46,9 @@ app.config['MAIL_PORT'] = int(os.getenv('MAIL_PORT', '587'))
 app.config['MAIL_USE_TLS'] = os.getenv('MAIL_USE_TLS') == 'True'
 app.config['MAIL_USERNAME'] = os.getenv('MAIL_USERNAME')
 app.config['MAIL_PASSWORD'] = os.getenv('MAIL_PASSWORD')
-app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024 # 5 MB max upload
+app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024
 
 IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
-
 mail = Mail(app)
 db.init_app(app)
 
@@ -69,7 +58,7 @@ with app.app_context():
         print("✅ Database tables created successfully!")
     except Exception as e:
         if "already exists" in str(e) or "DuplicateTable" in str(e) or "UniqueViolation" in str(e):
-            print("ℹ️ Database tables already exist (created by another worker), skipping.")
+            print("ℹ️ Database tables already exist, skipping.")
         else:
             print(f"⚠️ Database initialization error: {e}")
             
@@ -91,6 +80,11 @@ def token_required(f):
             data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
             current_user = db.session.get(User, data['user_id'])
             if not current_user: return jsonify({"error": "User not found"}), 401
+            
+            # ✅ FIX: Block access if status is 'blocked'
+            if current_user.status == 'blocked':
+                return jsonify({"error": "Account blocked. Contact admin."}), 403
+                
         except Exception as e:
             logger.error(f"Token Error: {e}")
             return jsonify({"error": "Invalid token"}), 401
@@ -107,20 +101,16 @@ def admin_required(f):
     return decorated
 
 def send_email(subject, recipient, body, attachment_data=None, attachment_name=None):
-    # ✅ 1. Check if email is disabled via env var (prevents hanging if False)
     if os.getenv('MAIL_ENABLED', 'True').lower() != 'true':
         logger.info(f"[EMAIL DISABLED] Skipping send to {recipient}. Subject: {subject}")
         return False
-
     try:
-        # ✅ 2. Wrap in app_context so Flask-Mail works in Gunicorn threads
         with app.app_context():
             sender_name = f"Multi-Agent Interview System <{app.config['MAIL_USERNAME']}>"
             msg = Message(subject, sender=sender_name, recipients=[recipient])
             msg.body = body
             if attachment_data:
                 msg.attach(attachment_name, "application/pdf", attachment_data)
-            
             mail.send(msg)
             return True
     except Exception as e:
@@ -130,7 +120,6 @@ def send_email(subject, recipient, body, attachment_data=None, attachment_name=N
 def generate_otp_hash(code):
     return hashlib.sha256(code.encode()).hexdigest()
 
-# ✅ FIX 1: Secure snapshot serving route that accepts JWT
 @app.route('/api/admin/snapshots/<int:session_id>/<filename>', methods=['GET'])
 @admin_required
 def serve_snapshot(current_user, session_id, filename):
@@ -138,10 +127,8 @@ def serve_snapshot(current_user, session_id, filename):
         safe_filename = os.path.basename(filename)
         upload_folder = app.config.get('UPLOAD_FOLDER', os.path.join(app.root_path, 'uploads'))
         file_path = os.path.join(upload_folder, f'session_{session_id}', safe_filename)
-        
         if not os.path.exists(file_path):
             return jsonify({"error": "Snapshot not found on disk"}), 404
-        
         return send_file(file_path, mimetype='image/jpeg')
     except Exception as e:
         app.logger.error(f"Error serving snapshot: {e}")
@@ -166,18 +153,22 @@ def signup():
         otp_code = str(random.randint(100000, 999999))
         expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=5)
         
+        # ✅ SECURE: Hash password BEFORE saving to payload
+        payload_data = {
+            'name': data['name'],
+            'password_hash': generate_password_hash(data['password'], method='pbkdf2:sha256')
+        }
+        
         db.session.add(OTPCode(
             email=email, code_hash=generate_otp_hash(otp_code), type='signup',
-            payload=json.dumps(data), expires_at=expires_at
+            payload=json.dumps(payload_data), expires_at=expires_at
         ))
         db.session.commit()
         
-        # ✅ SECURE: Check if email actually sent
         email_sent = send_email("Your Interview App OTP", email, f"Your OTP for signup is: {otp_code}. It expires in 5 minutes.")
         if email_sent:
             return jsonify({"status": "success", "message": "OTP sent to email!"})
         else:
-            # OTP stays in server logs ONLY. Client gets a generic error.
             print(f"[DEV MODE] Signup OTP for {email} is: {otp_code}")
             return jsonify({"error": "Could not send email. Please try again later."}), 500
             
@@ -206,7 +197,14 @@ def verify_signup_otp():
             return jsonify({"error": "Invalid OTP"}), 400
             
         user_data = json.loads(otp_record.payload)
-        new_user = User(name=user_data['name'], email=email, password_hash=generate_password_hash(user_data['password'], method='pbkdf2:sha256'), role='candidate', status='active')
+        # ✅ SECURE: Use the pre-hashed password from the payload
+        new_user = User(
+            name=user_data['name'], 
+            email=email, 
+            password_hash=user_data['password_hash'], 
+            role='candidate', 
+            status='active'
+        )
         db.session.add(new_user)
         db.session.delete(otp_record)
         db.session.commit()
@@ -240,19 +238,17 @@ def login():
         ))
         db.session.commit()
         
-        # ✅ SECURE: Check if email actually sent
         email_sent = send_email("Your Login OTP", email, f"Your OTP for login is: {otp_code}.")
         if email_sent: 
             return jsonify({"status": "success", "message": "OTP sent to email!"})
         else:
-            # OTP stays in server logs ONLY. Client gets a generic error.
             print(f"[DEV MODE] Login OTP for {email} is: {otp_code}")
             return jsonify({"error": "Could not send email. Please try again later."}), 500
             
     except Exception as e:
         app.logger.exception("Login Error")
         return jsonify({"error": "Something went wrong. Please try again."}), 500
-    
+
 @app.route('/api/verify-login-otp', methods=['POST'])
 @limiter.limit("5 per minute")
 def verify_login_otp():
@@ -283,49 +279,32 @@ def verify_login_otp():
         app.logger.exception("Verify Login Error")
         return jsonify({"error": "Something went wrong. Please try again."}), 500
 
-# ==============================================================================
-# FORGOT PASSWORD ROUTES
-# ==============================================================================
-
 @app.route('/api/forgot-password-request', methods=['POST'])
 @limiter.limit("5 per minute")
 def forgot_password_request():
     try:
         data = request.get_json()
         email = data.get('email', '').strip().lower()
-        if not email: 
-            return jsonify({"error": "Email is required"}), 400
-            
+        if not email: return jsonify({"error": "Email is required"}), 400
         user = User.query.filter_by(email=email).first()
-        if not user: 
-            return jsonify({"error": "User not found with this email"}), 404
+        if not user: return jsonify({"error": "User not found with this email"}), 404
             
         otp_code = str(random.randint(100000, 999999))
         expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=5)
         
-        # ✅ Save to OTPCode table with type='reset'
-        db.session.add(OTPCode(
-            email=email, 
-            code_hash=generate_otp_hash(otp_code), 
-            type='reset',
-            payload='', 
-            expires_at=expires_at
-        ))
+        db.session.add(OTPCode(email=email, code_hash=generate_otp_hash(otp_code), type='reset', payload='', expires_at=expires_at))
         db.session.commit()
         
-        # ✅ SECURE: Check if email actually sent
         email_sent = send_email("Your Password Reset OTP", email, f"Your OTP for password reset is: {otp_code}. It expires in 5 minutes.")
         if email_sent:
             return jsonify({"status": "success", "message": "OTP sent to email!"})
         else:
-            # OTP stays in server logs ONLY. Client gets a generic error.
             print(f"[DEV MODE] Password Reset OTP for {email} is: {otp_code}")
             return jsonify({"error": "Could not send email. Please try again later."}), 500
-            
     except Exception as e: 
         app.logger.exception("Forgot Password Request Error")
         return jsonify({"error": "Something went wrong. Please try again."}), 500    
-    
+
 @app.route('/api/forgot-password-verify', methods=['POST'])
 @limiter.limit("5 per minute")
 def forgot_password_verify():
@@ -338,30 +317,23 @@ def forgot_password_verify():
         if not new_password or len(new_password) < 6: 
             return jsonify({"error": "Password must be at least 6 characters"}), 400
             
-        # ✅ FIX: Query the database for the latest reset OTP
         otp_record = OTPCode.query.filter_by(email=email, type='reset').order_by(OTPCode.created_at.desc()).first()
         
-        if not otp_record:
-            return jsonify({"error": "No reset OTP requested"}), 400
-        if otp_record.attempts >= 5:
-            return jsonify({"error": "Max attempts reached. Please request a new OTP."}), 429
-        if datetime.datetime.utcnow() > otp_record.expires_at:
-            return jsonify({"error": "OTP expired. Please request a new one."}), 400
+        if not otp_record: return jsonify({"error": "No reset OTP requested"}), 400
+        if otp_record.attempts >= 5: return jsonify({"error": "Max attempts reached. Please request a new OTP."}), 429
+        if datetime.datetime.utcnow() > otp_record.expires_at: return jsonify({"error": "OTP expired. Please request a new one."}), 400
         if otp_record.code_hash != generate_otp_hash(otp):
             otp_record.attempts += 1
             db.session.commit()
             return jsonify({"error": "Invalid OTP"}), 401
             
-        # OTP is valid! Update password and clean up the used OTP
         user = User.query.filter_by(email=email).first()
         if user:
             user.password_hash = generate_password_hash(new_password, method='pbkdf2:sha256')
             db.session.delete(otp_record) 
             db.session.commit()
             return jsonify({"status": "success", "message": "Password updated successfully! You can now login."})
-            
         return jsonify({"error": "User not found"}), 404
-        
     except Exception as e: 
         app.logger.exception("Verify Forgot Password Error")
         return jsonify({"error": "Something went wrong. Please try again."}), 500
@@ -374,27 +346,19 @@ def forgot_password_verify_otp_only():
         email = data.get('email', '').strip().lower()
         otp = data.get('otp', '').replace(' ', '').strip()
         
-        # Find the latest reset OTP for this email
         otp_record = OTPCode.query.filter_by(email=email, type='reset').order_by(OTPCode.created_at.desc()).first()
-        
-        if not otp_record:
-            return jsonify({"error": "No reset OTP requested"}), 400
-        if otp_record.attempts >= 5:
-            return jsonify({"error": "Max attempts reached. Please request a new OTP."}), 429
-        if datetime.datetime.utcnow() > otp_record.expires_at:
-            return jsonify({"error": "OTP expired. Please request a new one."}), 400
+        if not otp_record: return jsonify({"error": "No reset OTP requested"}), 400
+        if otp_record.attempts >= 5: return jsonify({"error": "Max attempts reached. Please request a new OTP."}), 429
+        if datetime.datetime.utcnow() > otp_record.expires_at: return jsonify({"error": "OTP expired. Please request a new one."}), 400
         if otp_record.code_hash != generate_otp_hash(otp):
             otp_record.attempts += 1
             db.session.commit()
             return jsonify({"error": "Invalid OTP"}), 401
-            
-        # If we get here, the OTP is valid!
         return jsonify({"status": "success", "message": "OTP verified successfully."})
-        
     except Exception as e: 
         app.logger.exception("Verify OTP Error")
         return jsonify({"error": "Something went wrong."}), 500
-    
+
 # ==============================================================================
 # RESUME & INTERVIEW ROUTES
 # ==============================================================================
@@ -402,26 +366,17 @@ def forgot_password_verify_otp_only():
 @app.route('/api/upload-resume', methods=['POST'])
 @token_required
 def upload_resume(current_user):
-    if 'file' not in request.files:
-        return jsonify({"error": "No file provided"}), 400
-    
+    if 'file' not in request.files: return jsonify({"error": "No file provided"}), 400
     file = request.files['file']
-    if file.filename == '':
-        return jsonify({"error": "No file selected"}), 400
-        
-    if not file.filename.lower().endswith('.pdf'):
-        return jsonify({"error": "Only PDF files are allowed"}), 400
+    if file.filename == '': return jsonify({"error": "No file selected"}), 400
+    if not file.filename.lower().endswith('.pdf'): return jsonify({"error": "Only PDF files are allowed"}), 400
         
     file.seek(0)
-    magic_bytes = file.read(5)
-    file.seek(0)
-    if magic_bytes != b'%PDF-':
-        return jsonify({"error": "Invalid PDF file"}), 400
+    if file.read(5) != b'%PDF-': return jsonify({"error": "Invalid PDF file"}), 400
         
     ext = file.filename.rsplit('.', 1)[1].lower()
     filename = f"{uuid.uuid4()}.{ext}"
     filepath = os.path.join(UPLOAD_FOLDER, filename)
-    
     file.save(filepath)
     result = process_resume(filepath, current_user.user_id)
     return jsonify({"status": "success", "message": result})
@@ -445,27 +400,18 @@ def interview_chat(current_user):
     chat_history = data.get('chat_history', [])
     current_round = data.get('current_round', 1)
 
-    active_session = InterviewSession.query.filter_by(
-        user_id=current_user.user_id, status='in_progress'
-    ).order_by(InterviewSession.started_at.desc()).first()
+    active_session = InterviewSession.query.filter_by(user_id=current_user.user_id, status='in_progress').order_by(InterviewSession.started_at.desc()).first()
     
+    # ✅ FIX: If at 15 questions, complete the session and STOP. Do not create a new one.
     if active_session and Question.query.filter_by(session_id=active_session.session_id).count() >= 15:
         active_session.status = 'completed'
         db.session.commit()
-        active_session = None
-        
+        return jsonify({"status": "success", "response": "Interview completed. Please check your feedback.", "is_complete": True})
+
     if not active_session:
-        active_session = InterviewSession(
-            user_id=current_user.user_id, 
-            job_role=job_role, 
-            status='in_progress', 
-            started_at=datetime.datetime.utcnow()
-        )
+        active_session = InterviewSession(user_id=current_user.user_id, job_role=job_role, status='in_progress', started_at=datetime.datetime.utcnow())
         db.session.add(active_session)
         db.session.commit()
-
-    if Question.query.filter_by(session_id=active_session.session_id).count() >= 15:
-        return jsonify({"status": "success", "response": "Interview completed.", "is_complete": True})
 
     resume_context = get_resume_context(current_user.user_id)
     ai_response = get_interviewer_response(user_message, job_role, chat_history, resume_context, current_round)
@@ -473,84 +419,42 @@ def interview_chat(current_user):
     try:
         sess = InterviewSession.query.get(active_session.session_id)
         if not sess:
-            sess = InterviewSession.query.filter_by(
-                user_id=current_user.user_id, status='in_progress'
-            ).order_by(InterviewSession.started_at.desc()).first()
+            sess = InterviewSession.query.filter_by(user_id=current_user.user_id, status='in_progress').order_by(InterviewSession.started_at.desc()).first()
             
         if sess:
-            new_q = Question(
-                session_id=sess.session_id, 
-                question_text=ai_response, 
-                category='Technical',
-                difficulty='Medium'
-            )
+            new_q = Question(session_id=sess.session_id, question_text=ai_response, category='Technical', difficulty='Medium')
             db.session.add(new_q)
             db.session.flush()
-            
-            new_r = Response(
-                question_id=new_q.question_id, 
-                user_id=current_user.user_id, 
-                answer_text=user_message
-            )
+            new_r = Response(question_id=new_q.question_id, user_id=current_user.user_id, answer_text=user_message)
             db.session.add(new_r)
             db.session.commit()
         else:
             db.session.rollback()
             app.logger.warning("No valid session for persistence; skipping question/response save.")
-            
     except Exception as q_err:
         db.session.rollback()
         app.logger.warning(f"Question/Response persistence skipped (non-fatal): {q_err}")
 
-    return jsonify({
-        "status": "success", 
-        "response": ai_response, 
-        "is_complete": False
-    })
-
+    return jsonify({"status": "success", "response": ai_response, "is_complete": False})
 
 def check_abandoned_sessions():
     two_hours_ago = datetime.datetime.utcnow() - datetime.timedelta(hours=2)
-    abandoned_sessions = InterviewSession.query.filter(
-        InterviewSession.status == 'in_progress',
-        InterviewSession.started_at < two_hours_ago
-    ).all()
+    abandoned_sessions = InterviewSession.query.filter(InterviewSession.status == 'in_progress', InterviewSession.started_at < two_hours_ago).all()
     for session in abandoned_sessions:
         session.status = 'abandoned'
     if abandoned_sessions:
         db.session.commit()
 
-
 @app.route('/api/interview/<int:session_id>/resume', methods=['POST'])
 @token_required
 def resume_interview(current_user, session_id):
     check_abandoned_sessions()
-    session = InterviewSession.query.filter_by(
-        session_id=session_id, 
-        user_id=current_user.user_id, 
-        status='in_progress'
-    ).first()
-    
-    if not session:
-        return jsonify({"error": "Session not found or not in progress"}), 404
+    session = InterviewSession.query.filter_by(session_id=session_id, user_id=current_user.user_id, status='in_progress').first()
+    if not session: return jsonify({"error": "Session not found or not in progress"}), 404
         
     questions = Question.query.filter_by(session_id=session_id).all()
-    qa_history = []
-    for q in questions:
-        response = Response.query.filter_by(question_id=q.question_id).first()
-        qa_history.append({
-            "question": q.question_text,
-            "answer": response.answer_text if response else ""
-        })
-        
-    return jsonify({
-        "status": "success", 
-        "session": {
-            "job_role": session.job_role, 
-            "started_at": session.started_at.isoformat()
-        }, 
-        "qa_history": qa_history
-    })
+    qa_history = [{"question": q.question_text, "answer": Response.query.filter_by(question_id=q.question_id).first().answer_text if Response.query.filter_by(question_id=q.question_id).first() else ""} for q in questions]
+    return jsonify({"status": "success", "session": {"job_role": session.job_role, "started_at": session.started_at.isoformat()}, "qa_history": qa_history})
 
 @app.route('/api/interviews', methods=['GET'])
 @token_required
@@ -560,10 +464,7 @@ def get_interviews(current_user):
     for session in sessions:
         feedback = Feedback.query.filter_by(session_id=session.session_id).first()
         raw_time = session.started_at
-        if raw_time:
-            if raw_time.tzinfo is None: raw_time = raw_time.replace(tzinfo=datetime.timezone.utc)
-            date_str = raw_time.astimezone(IST).strftime("%d %b %Y, %I:%M %p")
-        else: date_str = "Unknown Date"
+        date_str = raw_time.astimezone(IST).strftime("%d %b %Y, %I:%M %p") if raw_time else "Unknown Date"
         result.append({"session_id": session.session_id, "job_role": session.job_role, "status": session.status, "started_at": date_str, "technical_score": feedback.technical_score if feedback else None, "behavioral_score": feedback.behavioral_score if feedback else None})
     result.reverse()
     return jsonify({"status": "success", "data": result})
@@ -588,27 +489,12 @@ def get_user_stats(current_user):
         completed = [s for s in all_sessions if s.status == 'completed']
         tech_scores = [f.technical_score for s in completed for f in [Feedback.query.filter_by(session_id=s.session_id).first()] if f and f.technical_score is not None]
         behav_scores = [f.behavioral_score for s in completed for f in [Feedback.query.filter_by(session_id=s.session_id).first()] if f and f.behavioral_score is not None]
-
         history = []
         for idx, s in enumerate(all_sessions, 1):
             fb = Feedback.query.filter_by(session_id=s.session_id).first()
-            history.append({
-                'session_id': s.session_id, 'job_role': s.job_role,
-                'date': s.started_at.strftime('%d %b %Y, %I:%M %p') if s.started_at else 'N/A',
-                'status': s.status, 'interview_number': len(all_sessions) - idx + 1,
-                'technical_score': fb.technical_score if fb and fb.technical_score is not None else None,
-                'behavioral_score': fb.behavioral_score if fb and fb.behavioral_score is not None else None,
-                'average_score': round((fb.technical_score + fb.behavioral_score) / 2, 1) if fb and fb.technical_score is not None else None
-            })
-
+            history.append({'session_id': s.session_id, 'job_role': s.job_role, 'date': s.started_at.strftime('%d %b %Y, %I:%M %p') if s.started_at else 'N/A', 'status': s.status, 'interview_number': len(all_sessions) - idx + 1, 'technical_score': fb.technical_score if fb and fb.technical_score is not None else None, 'behavioral_score': fb.behavioral_score if fb and fb.behavioral_score is not None else None, 'average_score': round((fb.technical_score + fb.behavioral_score) / 2, 1) if fb and fb.technical_score is not None else None})
         active = next((s.session_id for s in all_sessions if s.status == 'in_progress'), None)
-
-        return jsonify({
-            'total_interviews': len(completed), 'active_session_id': active,
-            'average_technical_score': round(sum(tech_scores)/len(tech_scores), 1) if tech_scores else 0,
-            'average_behavioral_score': round(sum(behav_scores)/len(behav_scores), 1) if behav_scores else 0,
-            'interview_history': history
-        })
+        return jsonify({'total_interviews': len(completed), 'active_session_id': active, 'average_technical_score': round(sum(tech_scores)/len(tech_scores), 1) if tech_scores else 0, 'average_behavioral_score': round(sum(behav_scores)/len(behav_scores), 1) if behav_scores else 0, 'interview_history': history})
     except Exception as e:
         app.logger.exception("Error getting user stats")
         return jsonify({"error": "Something went wrong. Please try again."}), 500
@@ -618,9 +504,7 @@ def get_user_stats(current_user):
 def get_feedback_pdf(current_user, session_id):
     session = InterviewSession.query.get(session_id)
     if not session: return jsonify({"error": "Session not found"}), 404
-    if current_user.role != 'admin' and current_user.user_id != session.user_id:
-        return jsonify({"error": "Access denied"}), 403
-        
+    if current_user.role != 'admin' and current_user.user_id != session.user_id: return jsonify({"error": "Access denied"}), 403
     feedback = Feedback.query.filter_by(session_id=session_id).first()
     if not feedback: return jsonify({"error": "Feedback not found"}), 404
         
@@ -642,7 +526,6 @@ def get_feedback_pdf(current_user, session_id):
     pdf.cell(0, 10, "Weaknesses:", ln=True)
     pdf.set_font("Arial", size=11)
     pdf.multi_cell(0, 10, feedback.weaknesses)
-    
     pdf_data = pdf.output(dest='S').encode('latin-1')
     return send_file(BytesIO(pdf_data), mimetype='application/pdf', as_attachment=True, download_name=f"Feedback_{session.job_role.replace(' ', '_')}.pdf")
 
@@ -664,28 +547,27 @@ def evaluate_session(current_user, session_id):
                     file_path = os.path.join(upload_dir, f'snapshot_{i}.jpg')
                     with open(file_path, 'wb') as f:
                         f.write(base64.b64decode(image_data))
-                    # ✅ FIX 2: Return the secure API route instead of direct file path
                     saved_snapshots.append(f'/api/admin/snapshots/{session_id}/snapshot_{i}.jpg')
                 except Exception as img_err:
                     app.logger.warning(f"Failed to save snapshot {i}: {img_err}")
 
-        session = InterviewSession.query.filter_by(
-            session_id=session_id, user_id=current_user.user_id
-        ).first()
-        if not session:
-            return jsonify({"error": "Session not found"}), 404
+        session = InterviewSession.query.filter_by(session_id=session_id, user_id=current_user.user_id).first()
+        if not session: return jsonify({"error": "Session not found"}), 404
 
-        chat_history = getattr(session, 'chat_history', None) or getattr(session, 'transcript', None) or []
+        # ✅ FIX: Query the actual Question and Response tables to build QA pairs
+        questions = Question.query.filter_by(session_id=session_id).order_by(Question.question_id.asc()).all()
+        qa_pairs = []
+        for q in questions:
+            response = Response.query.filter_by(question_id=q.question_id).first()
+            qa_pairs.append({"question": q.question_text, "answer": response.answer_text if response else "No answer provided"})
+        
         resume_context = getattr(session, 'resume_context', '') or ''
         job_role = getattr(session, 'job_role', 'Software Engineer') or 'Software Engineer'
 
         from agents.evaluator import evaluate_interview
-        feedback_data = evaluate_interview(
-            qa_pairs=chat_history, job_role=job_role, resume_context=resume_context
-        )
+        feedback_data = evaluate_interview(qa_pairs=qa_pairs, job_role=job_role, resume_context=resume_context)
 
         existing_feedback = Feedback.query.filter_by(session_id=session_id).first()
-
         if existing_feedback:
             existing_feedback.technical_score = feedback_data.get("technical_score", 0)
             existing_feedback.behavioral_score = feedback_data.get("behavioral_score", 0)
@@ -695,44 +577,22 @@ def evaluate_session(current_user, session_id):
             db.session.commit()
             feedback_obj = existing_feedback
         else:
-            new_feedback = Feedback(
-                session_id=session_id,
-                user_id=current_user.user_id,
-                technical_score=feedback_data.get("technical_score", 0),
-                behavioral_score=feedback_data.get("behavioral_score", 0),
-                strengths=feedback_data.get("strengths", ""),
-                weaknesses=feedback_data.get("weaknesses", ""),
-                career_recommendations=feedback_data.get("career_recommendations", ""),
-                admin_override=False
-            )
+            new_feedback = Feedback(session_id=session_id, user_id=current_user.user_id, technical_score=feedback_data.get("technical_score", 0), behavioral_score=feedback_data.get("behavioral_score", 0), strengths=feedback_data.get("strengths", ""), weaknesses=feedback_data.get("weaknesses", ""), career_recommendations=feedback_data.get("career_recommendations", ""), admin_override=False)
             db.session.add(new_feedback)
             db.session.commit()
             feedback_obj = new_feedback
 
         session.status = 'completed'
         db.session.commit()
-
         app.logger.info(f"Session {session_id} evaluated. {len(saved_snapshots)} snapshots saved to disk.")
 
-        return jsonify({
-            "status": "success",
-            "message": "Interview evaluated successfully!",
-            "data": {
-                "feedback_id": feedback_obj.feedback_id,
-                "technical_score": feedback_obj.technical_score,
-                "behavioral_score": feedback_obj.behavioral_score,
-                "strengths": feedback_obj.strengths,
-                "weaknesses": feedback_obj.weaknesses,
-                "career_recommendations": feedback_obj.career_recommendations,
-                "snapshots": saved_snapshots
-            }
-        }), 200
+        return jsonify({"status": "success", "message": "Interview evaluated successfully!", "data": {"feedback_id": feedback_obj.feedback_id, "technical_score": feedback_obj.technical_score, "behavioral_score": feedback_obj.behavioral_score, "strengths": feedback_obj.strengths, "weaknesses": feedback_obj.weaknesses, "career_recommendations": feedback_obj.career_recommendations, "snapshots": saved_snapshots}}), 200
 
     except Exception as e:
         db.session.rollback()
         app.logger.exception(f"Error evaluating session {session_id}")
         return jsonify({"error": "Failed to evaluate interview. Please try again."}), 500
-            
+
 # ==============================================================================
 # ADMIN ROUTES (Protected)
 # ==============================================================================
@@ -744,18 +604,15 @@ def get_admin_metrics(current_user):
     feedbacks = Feedback.query.all()
     avg_tech = round(sum(f.technical_score for f in feedbacks) / len(feedbacks), 1) if feedbacks else 0
     avg_behav = round(sum(f.behavioral_score for f in feedbacks) / len(feedbacks), 1) if feedbacks else 0
-    
     thirty_days_ago = datetime.datetime.utcnow() - timedelta(days=30)
     recent_sessions = InterviewSession.query.filter(InterviewSession.started_at >= thirty_days_ago).all()
     volume_data = {}
     for session in recent_sessions:
         date_str = session.started_at.strftime('%m-%d')
         volume_data[date_str] = volume_data.get(date_str, 0) + 1
-    
     chart_volume = [{"date": (datetime.datetime.utcnow() - timedelta(days=i)).strftime('%m-%d'), "count": volume_data.get((datetime.datetime.utcnow() - timedelta(days=i)).strftime('%m-%d'), 0)} for i in range(30, -1, -1)]
     roles = db.session.query(InterviewSession.job_role, func.count(InterviewSession.session_id)).group_by(InterviewSession.job_role).all()
     chart_roles = [{"name": role, "value": count} for role, count in roles if role]
-
     return jsonify({"status": "success", "data": {"total_candidates": total_candidates, "total_interviews": total_interviews, "avg_tech_score": avg_tech, "avg_behav_score": avg_behav, "volume_chart": chart_volume, "role_chart": chart_roles}})
 
 @app.route('/api/admin/interviews', methods=['GET'])
@@ -770,15 +627,7 @@ def get_all_interviews(current_user):
             question_count = Question.query.filter_by(session_id=session.session_id).count()
             raw_time = session.started_at
             date_str = raw_time.astimezone(IST).strftime("%d %b %Y, %I:%M %p") if raw_time and raw_time.tzinfo is not None else "Unknown Date"
-            result.append({
-                "session_id": session.session_id, "candidate_name": user.name if user else "Unknown",
-                "candidate_email": user.email if user else "Unknown", "job_role": session.job_role,
-                "status": session.status, "started_at": date_str, "questions_count": question_count,
-                "technical_score": feedback.technical_score if feedback else None,
-                "behavioral_score": feedback.behavioral_score if feedback else None,
-                "admin_override": feedback.admin_override if feedback else False,
-                "strengths": feedback.strengths if feedback else None, "weaknesses": feedback.weaknesses if feedback else None
-            })
+            result.append({"session_id": session.session_id, "candidate_name": user.name if user else "Unknown", "candidate_email": user.email if user else "Unknown", "job_role": session.job_role, "status": session.status, "started_at": date_str, "questions_count": question_count, "technical_score": feedback.technical_score if feedback else None, "behavioral_score": feedback.behavioral_score if feedback else None, "admin_override": feedback.admin_override if feedback else False, "strengths": feedback.strengths if feedback else None, "weaknesses": feedback.weaknesses if feedback else None})
         return jsonify({"status": "success", "data": result})
     except Exception as e:
         app.logger.exception("Error in get_all_interviews")
@@ -794,24 +643,9 @@ def get_interview_transcript(current_user, session_id):
         feedback = Feedback.query.filter_by(session_id=session_id).first()
         questions = Question.query.filter_by(session_id=session_id).order_by(Question.question_id.asc()).all()
         qa_history = [{"question": q.question_text, "answer": Response.query.filter_by(question_id=q.question_id).first().answer_text if Response.query.filter_by(question_id=q.question_id).first() else "No answer provided", "category": q.category, "difficulty": q.difficulty} for q in questions]
-        deliberation_logs = [
-            {"time": "14:24:55", "type": "info", "text": "RAG-Engine: Querying benchmark standards for " + session.job_role},
-            {"time": "14:24:56", "type": "success", "text": "Evaluator (Chronos): Analyzing technical depth..."},
-            {"time": "14:24:58", "type": "warning", "text": "Evaluator: Candidate missed edge-case handling in Q3."},
-            {"time": "14:25:01", "type": "info", "text": "Sophia: Generating behavioral follow-up question."}
-        ]
+        deliberation_logs = [{"time": "14:24:55", "type": "info", "text": "RAG-Engine: Querying benchmark standards for " + session.job_role}, {"time": "14:24:56", "type": "success", "text": "Evaluator (Chronos): Analyzing technical depth..."}, {"time": "14:24:58", "type": "warning", "text": "Evaluator: Candidate missed edge-case handling in Q3."}, {"time": "14:25:01", "type": "info", "text": "Sophia: Generating behavioral follow-up question."}]
         rag_context = "Candidate Resume Context: 3 years experience in React, Node.js. Previous role: Frontend Dev at TechCorp. Skills: JavaScript, Python, AWS."
-        return jsonify({
-            "status": "success", "data": {
-                "session_id": session_id, "candidate_name": user.name if user else "Unknown",
-                "candidate_email": user.email if user else "Unknown", "job_role": session.job_role,
-                "started_at": session.started_at.strftime("%d %b %Y, %I:%M %p") if session.started_at else "Unknown",
-                "technical_score": feedback.technical_score if feedback else 0, "behavioral_score": feedback.behavioral_score if feedback else 0,
-                "admin_override": feedback.admin_override if feedback else False, "strengths": feedback.strengths if feedback else "N/A",
-                "weaknesses": feedback.weaknesses if feedback else "N/A", "career_recommendations": feedback.career_recommendations if feedback else "N/A",
-                "qa_history": qa_history, "deliberation_logs": deliberation_logs, "rag_context": rag_context
-            }
-        })
+        return jsonify({"status": "success", "data": {"session_id": session_id, "candidate_name": user.name if user else "Unknown", "candidate_email": user.email if user else "Unknown", "job_role": session.job_role, "started_at": session.started_at.strftime("%d %b %Y, %I:%M %p") if session.started_at else "Unknown", "technical_score": feedback.technical_score if feedback else 0, "behavioral_score": feedback.behavioral_score if feedback else 0, "admin_override": feedback.admin_override if feedback else False, "strengths": feedback.strengths if feedback else "N/A", "weaknesses": feedback.weaknesses if feedback else "N/A", "career_recommendations": feedback.career_recommendations if feedback else "N/A", "qa_history": qa_history, "deliberation_logs": deliberation_logs, "rag_context": rag_context}})
     except Exception as e:
         app.logger.exception("Error in get_interview_transcript")
         return jsonify({"error": "Something went wrong. Please try again."}), 500
@@ -839,7 +673,6 @@ def override_score(current_user, session_id):
 # ==============================================================================
 # PROCTORING & SETTINGS ROUTES
 # ==============================================================================
-
 @app.route('/api/violation', methods=['POST'])
 @token_required
 def log_violation(current_user):
@@ -848,15 +681,11 @@ def log_violation(current_user):
         session_id = data.get('session_id')
         violation_type = data.get('type')
         details = data.get('details', '')
-        
         session = InterviewSession.query.filter_by(session_id=session_id, user_id=current_user.user_id).first()
-        if not session:
-            return jsonify({"error": "Session not found"}), 404
-            
+        if not session: return jsonify({"error": "Session not found"}), 404
         new_violation = Violation(user_id=current_user.user_id, session_id=session_id, violation_type=violation_type, description=details)
         db.session.add(new_violation)
         db.session.commit()
-        
         count = Violation.query.filter_by(session_id=session_id).count()
         return jsonify({"status": "success", "violation_count": count})
     except Exception as e:
@@ -887,12 +716,7 @@ def get_proctoring_logs(current_user):
             sessions = InterviewSession.query.filter_by(user_id=user.user_id).all()
             for session in sessions:
                 violation_count = Violation.query.filter_by(session_id=session.session_id).count()
-                report.append({
-                    "user_id": user.user_id, "candidate_name": user.name, "candidate_email": user.email,
-                    "session_id": session.session_id, "job_role": session.job_role, "status": session.status,
-                    "started_at": session.started_at.strftime("%d %b %Y, %I:%M %p") if session.started_at else "Unknown",
-                    "violation_count": violation_count
-                })
+                report.append({"user_id": user.user_id, "candidate_name": user.name, "candidate_email": user.email, "session_id": session.session_id, "job_role": session.job_role, "status": session.status, "started_at": session.started_at.strftime("%d %b %Y, %I:%M %p") if session.started_at else "Unknown", "violation_count": violation_count})
         return jsonify({"status": "success", "data": report})
     except Exception as e:
         app.logger.exception("Error in get_proctoring_logs")
@@ -927,7 +751,6 @@ def get_proctoring_evidence(current_user, session_id):
         violations = Violation.query.filter_by(session_id=session_id).all()
         violation_logs = [{"time": v.timestamp.strftime("%H:%M:%S"), "type": v.violation_type, "description": v.description} for v in violations]
         
-        # ✅ FIX 3: Read snapshots directly from disk instead of relying on empty Snapshot DB table
         upload_folder = app.config.get('UPLOAD_FOLDER', os.path.join(app.root_path, 'uploads'))
         session_upload_dir = os.path.join(upload_folder, f'session_{session_id}')
         snapshot_gallery = []
@@ -937,32 +760,15 @@ def get_proctoring_evidence(current_user, session_id):
             files = sorted([f for f in os.listdir(session_upload_dir) if f.endswith('.jpg')])
             for i, filename in enumerate(files):
                 is_flagged = has_violations and (i % 2 == 1)
-                snapshot_gallery.append({
-                    "id": i + 1,
-                    "timestamp": "Captured", 
-                    "image_url": f"/api/admin/snapshots/{session_id}/{filename}", # ✅ Secure API URL
-                    "flagged": is_flagged,
-                    "reason": "Flagged due to session violations" if is_flagged else "Normal"
-                })
+                snapshot_gallery.append({"id": i + 1, "timestamp": "Captured", "image_url": f"/api/admin/snapshots/{session_id}/{filename}", "flagged": is_flagged, "reason": "Flagged due to session violations" if is_flagged else "Normal"})
         
-        # Fallback if no snapshots on disk yet
         if not snapshot_gallery and session.started_at:
             base_time = session.started_at
             for i in range(4):
                 snap_time = base_time + datetime.timedelta(minutes=5 * (i + 1))
                 snapshot_gallery.append({"id": i + 1, "timestamp": snap_time.strftime("%H:%M:%S"), "image_url": None, "flagged": i == 1 or i == 3, "reason": "Tab switch detected" if i == 1 else "Gaze diverted from screen" if i == 3 else "Normal"})
                 
-        return jsonify({
-            "status": "success", 
-            "data": {
-                "candidate_name": user.name if user else "Unknown", 
-                "candidate_email": user.email if user else "Unknown", 
-                "job_role": session.job_role, 
-                "qa_history": qa_history, 
-                "violation_logs": violation_logs, 
-                "snapshot_gallery": snapshot_gallery
-            }
-        })
+        return jsonify({"status": "success", "data": {"candidate_name": user.name if user else "Unknown", "candidate_email": user.email if user else "Unknown", "job_role": session.job_role, "qa_history": qa_history, "violation_logs": violation_logs, "snapshot_gallery": snapshot_gallery}})
     except Exception as e:
         app.logger.exception("Error in get_proctoring_evidence")
         return jsonify({"error": "Something went wrong. Please try again."}), 500
@@ -1001,7 +807,6 @@ def update_proctoring_settings(current_user):
 # ==============================================================================
 # ADMIN USER ROUTES
 # ==============================================================================
-
 @app.route('/api/admin/users', methods=['GET'])
 @admin_required
 def get_all_users(current_user):
