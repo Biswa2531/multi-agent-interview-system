@@ -8,6 +8,7 @@ import io
 import hashlib
 import uuid
 import logging
+import secrets
 from functools import wraps
 from io import BytesIO
 
@@ -892,7 +893,8 @@ def delete_user(current_user, user_id):
 def reset_user_password(current_user, user_id):
     user = db.session.get(User, user_id)
     if not user: return jsonify({"error": "User not found"}), 404
-    temp_password = "TempPass123!"
+    # NEW (Secure & Random):
+    temp_password = secrets.token_urlsafe(8) # Generates a secure random string like 'x7K9_pL2mQ'
     user.password_hash = generate_password_hash(temp_password, method='pbkdf2:sha256')
     db.session.commit()
     send_email("Password Reset by Admin", user.email, f"Hello {user.name},\n\nYour password has been reset by the system administrator.\nYour temporary password is: {temp_password}\n\nPlease log in and change it immediately.")
