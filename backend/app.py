@@ -545,9 +545,18 @@ def get_feedback_pdf(current_user, session_id):
 @token_required
 def evaluate_session(current_user, session_id):
     try:
+        # ✅ FIX IDOR: Verify session ownership BEFORE processing any data or writing files
+        session = InterviewSession.query.filter_by(
+            session_id=session_id, user_id=current_user.user_id
+        ).first()
+        
+        if not session:
+            return jsonify({"error": "Session not found or access denied"}), 404
+
         data = request.get_json() or {}
         snapshots = data.get('snapshots', [])
 
+        # Now it is safe to write files, because we know the user owns this session
         saved_snapshots = []
         if snapshots:
             upload_folder = app.config.get('UPLOAD_FOLDER', os.path.join(app.root_path, 'uploads'))
@@ -563,10 +572,7 @@ def evaluate_session(current_user, session_id):
                 except Exception as img_err:
                     app.logger.warning(f"Failed to save snapshot {i}: {img_err}")
 
-        session = InterviewSession.query.filter_by(session_id=session_id, user_id=current_user.user_id).first()
-        if not session: return jsonify({"error": "Session not found"}), 404
-
-        # ✅ FIX: Query the actual Question and Response tables to build QA pairs
+        # Build QA pairs for the evaluator
         questions = Question.query.filter_by(session_id=session_id).order_by(Question.question_id.asc()).all()
         qa_pairs = []
         for q in questions:
@@ -579,6 +585,7 @@ def evaluate_session(current_user, session_id):
         from agents.evaluator import evaluate_interview
         feedback_data = evaluate_interview(qa_pairs=qa_pairs, job_role=job_role, resume_context=resume_context)
 
+        # Safe Upsert for Feedback
         existing_feedback = Feedback.query.filter_by(session_id=session_id).first()
         if existing_feedback:
             existing_feedback.technical_score = feedback_data.get("technical_score", 0)
@@ -589,7 +596,15 @@ def evaluate_session(current_user, session_id):
             db.session.commit()
             feedback_obj = existing_feedback
         else:
-            new_feedback = Feedback(session_id=session_id, user_id=current_user.user_id, technical_score=feedback_data.get("technical_score", 0), behavioral_score=feedback_data.get("behavioral_score", 0), strengths=feedback_data.get("strengths", ""), weaknesses=feedback_data.get("weaknesses", ""), career_recommendations=feedback_data.get("career_recommendations", ""), admin_override=False)
+            new_feedback = Feedback(
+                session_id=session_id, user_id=current_user.user_id, 
+                technical_score=feedback_data.get("technical_score", 0), 
+                behavioral_score=feedback_data.get("behavioral_score", 0), 
+                strengths=feedback_data.get("strengths", ""), 
+                weaknesses=feedback_data.get("weaknesses", ""), 
+                career_recommendations=feedback_data.get("career_recommendations", ""), 
+                admin_override=False
+            )
             db.session.add(new_feedback)
             db.session.commit()
             feedback_obj = new_feedback
@@ -598,13 +613,21 @@ def evaluate_session(current_user, session_id):
         db.session.commit()
         app.logger.info(f"Session {session_id} evaluated. {len(saved_snapshots)} snapshots saved to disk.")
 
-        return jsonify({"status": "success", "message": "Interview evaluated successfully!", "data": {"feedback_id": feedback_obj.feedback_id, "technical_score": feedback_obj.technical_score, "behavioral_score": feedback_obj.behavioral_score, "strengths": feedback_obj.strengths, "weaknesses": feedback_obj.weaknesses, "career_recommendations": feedback_obj.career_recommendations, "snapshots": saved_snapshots}}), 200
+        return jsonify({
+            "status": "success", "message": "Interview evaluated successfully!", 
+            "data": {
+                "feedback_id": feedback_obj.feedback_id, "technical_score": feedback_obj.technical_score, 
+                "behavioral_score": feedback_obj.behavioral_score, "strengths": feedback_obj.strengths, 
+                "weaknesses": feedback_obj.weaknesses, "career_recommendations": feedback_obj.career_recommendations, 
+                "snapshots": saved_snapshots
+            }
+        }), 200
 
     except Exception as e:
         db.session.rollback()
         app.logger.exception(f"Error evaluating session {session_id}")
         return jsonify({"error": "Failed to evaluate interview. Please try again."}), 500
-
+    
 # ==============================================================================
 # ADMIN ROUTES (Protected)
 # ==============================================================================
