@@ -19,25 +19,12 @@ function Feedback() {
   useEffect(() => {
     const fetchFeedback = async () => {
       try {
-        // ✅ Clean API call: No URL, no headers needed!
-        const res = await api.get('/api/interviews')
-        const session = res.data.data.find(s => s.session_id === parseInt(id))
-        
-        if (session) {
-          setFeedback({
-            job_role: session.job_role,
-            technical_score: session.technical_score || 0,
-            behavioral_score: session.behavioral_score || 0,
-            strengths: "Demonstrated strong problem-solving skills and clear communication.",
-            weaknesses: "Could improve on edge-case handling and time management.",
-            career_recommendations: "Focus on advanced system design and behavioral interview prep."
-          })
-        } else {
-          toast.error('Feedback not found')
-          navigate('/dashboard')
-        }
+        // ✅ FIX: Fetch the REAL AI-generated data from the backend
+        const res = await api.get(`/api/feedback/${id}`)
+        setFeedback(res.data.data)
       } catch (err) {
-        toast.error('Failed to load feedback')
+        console.error('Failed to load feedback:', err)
+        toast.error('Failed to load feedback report.')
         navigate('/dashboard')
       } finally {
         setIsLoading(false)
@@ -107,9 +94,10 @@ function Feedback() {
 
   if (isLoading) return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-900">
-      <div className="text-cyan-500 text-xl animate-pulse">Loading Feedback Report...</div>
+      <div className="text-cyan-500 text-xl animate-pulse">Analyzing your performance...</div>
     </div>
   )
+  
   if (!feedback) return null
 
   const avgScore = ((feedback.technical_score + feedback.behavioral_score) / 2).toFixed(1)
@@ -224,7 +212,7 @@ function Feedback() {
 
             <div className="glass-card p-6 rounded-2xl border border-white/20 dark:border-slate-700/50">
               <h3 className="text-lg font-bold text-emerald-500 mb-2 flex items-center gap-2">✅ Strengths</h3>
-              <p className="text-slate-600 dark:text-slate-300 text-sm leading-relaxed">{feedback.strengths}</p>
+              <p className="text-slate-600 dark:text-slate-300 text-sm leading-relaxed whitespace-pre-line">{feedback.strengths}</p>
             </div>
           </div>
         </div>
@@ -232,11 +220,11 @@ function Feedback() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
             <div className="glass-card p-6 rounded-2xl border border-white/20 dark:border-slate-700/50">
               <h3 className="text-lg font-bold text-red-500 mb-2 flex items-center gap-2">⚠️ Areas for Improvement</h3>
-              <p className="text-slate-600 dark:text-slate-300 text-sm leading-relaxed">{feedback.weaknesses}</p>
+              <p className="text-slate-600 dark:text-slate-300 text-sm leading-relaxed whitespace-pre-line">{feedback.weaknesses}</p>
             </div>
             <div className="glass-card p-6 rounded-2xl border border-white/20 dark:border-slate-700/50">
               <h3 className="text-lg font-bold text-cyan-500 mb-2 flex items-center gap-2">💡 Recommendations</h3>
-              <p className="text-slate-600 dark:text-slate-300 text-sm leading-relaxed">{feedback.career_recommendations}</p>
+              <p className="text-slate-600 dark:text-slate-300 text-sm leading-relaxed whitespace-pre-line">{feedback.career_recommendations}</p>
             </div>
         </div>
 

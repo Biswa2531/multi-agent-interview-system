@@ -541,6 +541,32 @@ def get_feedback_pdf(current_user, session_id):
     pdf_data = pdf.output(dest='S').encode('latin-1')
     return send_file(BytesIO(pdf_data), mimetype='application/pdf', as_attachment=True, download_name=f"Feedback_{session.job_role.replace(' ', '_')}.pdf")
 
+@app.route('/api/feedback/<int:session_id>', methods=['GET'])
+@token_required
+def get_feedback(current_user, session_id):
+    # ✅ Security: Ensure the user can only fetch their OWN feedback
+    session = InterviewSession.query.filter_by(
+        session_id=session_id, user_id=current_user.user_id
+    ).first()
+    if not session: 
+        return jsonify({"error": "Session not found"}), 404
+    
+    feedback = Feedback.query.filter_by(session_id=session_id).first()
+    if not feedback: 
+        return jsonify({"error": "Feedback not generated yet"}), 404
+    
+    return jsonify({
+        "status": "success",
+        "data": {
+            "job_role": session.job_role,
+            "technical_score": feedback.technical_score,
+            "behavioral_score": feedback.behavioral_score,
+            "strengths": feedback.strengths,
+            "weaknesses": feedback.weaknesses,
+            "career_recommendations": feedback.career_recommendations
+        }
+    })
+
 @app.route('/api/evaluate/<int:session_id>', methods=['POST'])
 @token_required
 def evaluate_session(current_user, session_id):
